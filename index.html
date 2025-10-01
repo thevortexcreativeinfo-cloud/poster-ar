@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Failsafe</title>
+<title>Poster AR · Cinematic</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
@@ -30,11 +30,14 @@
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
   <a-assets id="assets" timeout="60000">
     <img id="overlayImg" crossorigin="anonymous"/>
+    <!-- Glare para el vídeo (brillo diagonal) -->
+    <img id="glare" crossorigin="anonymous"
+         src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='white' stop-opacity='0'/><stop offset='0.4' stop-color='white' stop-opacity='0.12'/><stop offset='0.6' stop-color='white' stop-opacity='0.04'/><stop offset='1' stop-color='white' stop-opacity='0'/></linearGradient></defs><rect width='1024' height='1024' fill='url(%23g)'/></svg>"/>
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -48,7 +51,7 @@
   const log=(m,c='')=>{ dbg.innerHTML=(c?`<span class="${c}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   window.onerror=(msg,src,line,col)=>log('JS ERROR: '+msg+' @'+line+':'+col,'err');
 
-  // ---------- CONFIG FIJA (TU CASO) ----------
+  /* ====== CONFIG FIJA (tu caso) ====== */
   const CONF = {
     t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
     d: 'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png',
@@ -59,92 +62,183 @@
     },
     texts: [
       { text:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
-      { text:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' },
-      { text:'3:45            4:49', x:200, y:2550, w:2080, h:120, align:'center', color:'#000000' }
+      { text:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' }
     ],
+    timeText: { // reloj (elapsed / total)
+      x:200, y:2550, w:2080, h:120, align:'center', color:'#000000'
+    },
     audio: 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3',
-    progress: { x:300, y:2640, w:2060, h:14, bg:'#000000', fill:'#13d77a', knob:'#000000' },
-    // ajustes globales (encuadre fino)
-    dx:0, dy:0, scale:1, rot:0, parallax:false
+    progress: { x:300, y:2640, w:2060, h:18, bg:'#000000', fill:'#13d77a', knob:'#000000' },
+    // ajustes globales
+    dx:0, dy:0, scale:1, rot:0,
+    parallax:true,        // parallax muy leve
+    smoothFollow:true     // suavizado anclaje (lerp)
   };
-  // -------------------------------------------
+  /* =================================== */
 
   const scene=document.getElementById('scene');
-  // Enlaza .mind
-  scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
+  scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
   scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} log('Scene lista','ok'); });
 
   // Cámara en cover
-  const mo=new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{ if(v.srcObject instanceof MediaStream){
-    Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'}); }}); });
+  const mo=new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
+    if(v.srcObject instanceof MediaStream){
+      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
+    }
+  }); });
   mo.observe(document.documentElement,{subtree:true,childList:true});
+
+  // Helpers geom
+  const px2=(x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw,
+    cx:-0.5+(x+w/2)/CONF.pw, cy:(CONF.ph/CONF.pw)/2 - (y+h/2)/CONF.pw });
 
   // Assets
   overlayImg.src = CONF.d || '';
   const v1=document.getElementById('v1'); v1.src=CONF.video.src;
 
-  // Helpers
-  const px2 = (x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw,
-    cx:-0.5+(x+w/2)/CONF.pw, cy:(CONF.ph/CONF.pw)/2 - (y+h/2)/CONF.pw });
-
-  // Construcción sobre el anchor
+  // Anchor & root
   const anchor=document.getElementById('anchor');
   const root=document.createElement('a-entity');
   root.setAttribute('position', `${CONF.dx/CONF.pw} ${-CONF.dy/CONF.pw} 0`);
   root.setAttribute('scale', `${CONF.scale} ${CONF.scale} 1`);
   if(CONF.rot) root.setAttribute('rotation',`0 0 ${CONF.rot}`);
-  if(CONF.parallax) root.setAttribute('look-at','[camera]');
   anchor.appendChild(root);
+
+  // Suavizado de anclaje (lerp) y parallax
+  const THREE=AFRAME.THREE;
+  let lerpState={pos:new THREE.Vector3(), rot:new THREE.Quaternion(), scl:new THREE.Vector3(1,1,1), inited:false};
+  scene.addEventListener('renderstart',()=>{
+    root.addEventListener('componentchanged',()=>{}); // noop para mantener referencia
+    scene.addEventListener('frame',()=>{
+      if(!CONF.smoothFollow && !CONF.parallax) return;
+      const cam = scene.camera;
+      // Lerp hacia transform actual (ya anclado) para apagar micro-jitter
+      const obj=root.object3D;
+      if(!lerpState.inited){ lerpState.pos.copy(obj.position); lerpState.rot.copy(obj.quaternion); lerpState.scl.copy(obj.scale); lerpState.inited=true; }
+      // target = transform actual
+      lerpState.pos.lerp(obj.position, 0.35);
+      lerpState.rot.slerp(obj.quaternion, 0.35);
+      obj.position.copy(lerpState.pos);
+      obj.quaternion.copy(lerpState.rot);
+      // Parallax leve (gira un pelo hacia la cámara)
+      if(CONF.parallax && cam){
+        const toCam = cam.position.clone().sub(obj.getWorldPosition(new THREE.Vector3()));
+        const yaw = Math.atan2(toCam.x, toCam.z) * (180/Math.PI);
+        const pitch = Math.atan2(toCam.y, toCam.z) * (180/Math.PI);
+        const base = CONF.rot||0;
+        obj.rotation.set(THREE.MathUtils.degToRad(Math.max(-1,Math.min(1,pitch*0.03))),
+                         THREE.MathUtils.degToRad(Math.max(-1,Math.min(1,yaw*0.03))),
+                         THREE.MathUtils.degToRad(base));
+      }
+    });
+  });
 
   // Overlay
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height', CONF.ph/CONF.pw);
   overlay.setAttribute('position','0 0 0');
-  overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa; opacity:0.25;'} transparent:true; side:double; depthTest:false; opacity:1`);
+  overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa; opacity:0.25;'} transparent:true; side:double; depthTest:false; opacity:0`);
   overlay.addEventListener('loaded', ()=>{ const m=overlay.getObject3D('mesh'); if(m) m.renderOrder=10; });
+  overlay.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:340; easing:easeOutQuad; startEvents:show');
+  overlay.setAttribute('animation__pop','property:scale; from:0.97 0.97 1; to:1 1 1; dur:280; easing:easeOutQuad; startEvents:show');
   root.appendChild(overlay);
 
-  // Vídeo
-  const vs = CONF.video; const u = px2(vs.x,vs.y,vs.w,vs.h);
+  // Vídeo (con Ken-Burns + marco + glare)
+  const v = CONF.video; const u = px2(v.x,v.y,v.w,v.h);
+  const videoGroup=document.createElement('a-entity'); videoGroup.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
+  // marco/glow sutil
+  const frame=document.createElement('a-plane');
+  frame.setAttribute('width',u.wn*1.01); frame.setAttribute('height',u.hn*1.01);
+  frame.setAttribute('material','shader:flat; color:#000; opacity:0.7; transparent:true; depthTest:false'); frame.setAttribute('position','0 0 -0.001');
+  const glow=document.createElement('a-plane');
+  glow.setAttribute('width',u.wn*1.02); glow.setAttribute('height',u.hn*1.02);
+  glow.setAttribute('material','shader:flat; color:#13d77a; opacity:0.07; transparent:true; depthTest:false'); glow.setAttribute('position','0 0 -0.002');
+  // vídeo
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
   vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
+  // glare encima
+  const glare=document.createElement('a-plane');
+  glare.setAttribute('width',u.wn); glare.setAttribute('height',u.hn);
+  glare.setAttribute('material','shader:flat; src:#glare; transparent:true; opacity:0.18; depthTest:false');
+  glare.setAttribute('position','0 0 0.001');
+
+  // orden y anim
   vPlane.addEventListener('loaded', ()=>{ const m=vPlane.getObject3D('mesh'); if(m) m.renderOrder=20; });
-  function cover(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
-    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vs.w/vs.h; let rx=1,ry=1,ox=0,oy=0;
+  videoGroup.setAttribute('animation__pop','property:scale; from:0.965 0.965 1; to:1 1 1; dur:240; easing:easeOutQuad; startEvents:show');
+  // Ken-Burns suave (zoom y pan alternado)
+  videoGroup.setAttribute('animation__kb1','property:scale; dir:alternate; from:1 1 1; to:1.02 1.02 1; dur:8000; easing:linear; loop:true');
+  videoGroup.setAttribute('animation__kb2','property:position; dir:alternate; from:'+u.cx+' '+u.cy+' 0.03; to:'+(u.cx+0.003)+' '+(u.cy-0.002)+' 0.03; dur:9000; easing:easeInOutSine; loop:true');
+
+  // COVER en textura del vídeo
+  function cover(){ const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
+    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
   }
   vPlane.addEventListener('materialtextureloaded',cover);
   v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
-  root.appendChild(vPlane);
 
-  // Textos (canvas -> textura)
-  const THREE=AFRAME.THREE;
-  function textCanvas(txt,color,align,w,h){
+  videoGroup.appendChild(frame); videoGroup.appendChild(glow); videoGroup.appendChild(vPlane); videoGroup.appendChild(glare);
+  root.appendChild(videoGroup);
+
+  // Textos (canvas→textura, animados)
+  function makeTextCanvas(txt,color,align,w,h){
     const scale=2, cw=Math.max(64,Math.min(2048,Math.round(w*scale))), ch=Math.max(32,Math.min(1024,Math.round(h*scale)));
     const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
     ctx.fillStyle=color; ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=Math.floor(ch*0.06); ctx.shadowOffsetY=Math.floor(ch*0.03);
-    const fam='600 64px "Inter",system-ui,-apple-system,Segoe UI,Roboto'; let size=Math.floor(ch*0.72), lo=12, hi=Math.floor(ch*0.9), pad=Math.floor(cw*0.04);
+    const fam='600 64px "Inter", system-ui, -apple-system, Segoe UI, Roboto';
+    let size=Math.floor(ch*0.72), lo=12, hi=Math.floor(ch*0.9), pad=Math.floor(cw*0.04);
     while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=fam.replace('64px',mid+'px'); if(ctx.measureText(txt).width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
     ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle'; ctx.textAlign=(align==='left'?'left':align==='right'?'right':'center');
     const x=(align==='left')?pad:(align==='right')?(cw-pad):(cw/2), y=ch/2; ctx.fillText(txt,x,y); return c;
   }
-  function textPlane(s, z=0.12){
-    const g=px2(s.x,s.y,s.w,s.h), p=document.createElement('a-plane');
-    p.setAttribute('width',g.wn); p.setAttribute('height',g.hn); p.setAttribute('position',`${g.cx} ${g.cy} ${z}`);
-    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  function textPlane(slot, z=0.12){
+    const g=px2(slot.x,slot.y,slot.w,slot.h), p=document.createElement('a-plane');
+    p.setAttribute('width',g.wn); p.setAttribute('height',g.hn);
+    p.setAttribute('position', `${g.cx} ${g.cy} ${z}`);
+    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
+    p.setAttribute('animation__fade','property:material.opacity;from:0;to:1;dur:260;easing:easeOutQuad;startEvents:show');
+    p.setAttribute('animation__slide','property:position; to:'+g.cx+' '+(g.cy+0.003)+' '+z+'; dir:alternate; loop:true; dur:1200; easing:easeInOutSine');
     p.addEventListener('loaded',()=>{ const mesh=p.getObject3D('mesh'); if(!mesh) return;
-      const tex=new THREE.CanvasTexture(textCanvas(s.text,s.color,s.align,s.w,s.h));
-      mesh.material.map=tex; mesh.material.needsUpdate=true; mesh.renderOrder=30; });
+      const tex=new THREE.CanvasTexture(makeTextCanvas(slot.text,slot.color,slot.align,slot.w,slot.h));
+      tex.needsUpdate=true; mesh.material.map=tex; mesh.material.needsUpdate=true; mesh.renderOrder=30; p.emit('show',null,false);
+    });
     return p;
   }
-  CONF.texts.forEach(t=>root.appendChild(textPlane(t)));
+  CONF.texts.forEach(s=>root.appendChild(textPlane(s)));
 
-  // Audio + progreso
-  let audio=null, userOK=false, visible=false, prog=null;
+  // Reloj (elapsed / total) dinámico
+  const timeSlot = CONF.timeText;
+  let timePlane=null, timeTex=null, timeCanvas=null, timeNeedsRedraw=true;
+  if(timeSlot){
+    const g=px2(timeSlot.x,timeSlot.y,timeSlot.w,timeSlot.h);
+    timePlane=document.createElement('a-plane');
+    timePlane.setAttribute('width',g.wn); timePlane.setAttribute('height',g.hn);
+    timePlane.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
+    timePlane.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+    timePlane.addEventListener('loaded',()=>{ const mesh=timePlane.getObject3D('mesh'); if(!mesh) return;
+      timeCanvas=document.createElement('canvas'); timeCanvas.width=Math.min(1024,Math.round(timeSlot.w*2)); timeCanvas.height=Math.min(256,Math.round(timeSlot.h*2));
+      const ctx=timeCanvas.getContext('2d');
+      const draw=(elapsed,dur)=>{
+        ctx.clearRect(0,0,timeCanvas.width,timeCanvas.height);
+        const t=(s)=>String(Math.floor(s/60)).padStart(1,'0')+':'+String(Math.floor(s%60)).padStart(2,'0');
+        const txt = (isFinite(elapsed)?t(elapsed):'0:00')+'   /   '+(isFinite(dur)?t(dur):'0:00');
+        ctx.fillStyle=timeSlot.color; ctx.font='600 '+Math.floor(timeCanvas.height*0.7)+'px system-ui,Segoe UI,Roboto';
+        ctx.textBaseline='middle'; ctx.textAlign='center';
+        ctx.fillText(txt, timeCanvas.width/2, timeCanvas.height/2);
+      };
+      timeTex=new THREE.CanvasTexture(timeCanvas); mesh.material.map=timeTex; mesh.material.needsUpdate=true;
+      // primer dibujo
+      draw(0,0); timeTex.needsUpdate=true;
+      // guarda función para tick
+      timePlane._drawTime = draw;
+    });
+    root.appendChild(timePlane);
+  }
+
+  // Audio + progreso + ecualizador
+  let audio=null, userOK=false, visible=false, prog=null, analyser=null, eqBars=[];
   if(CONF.audio){ audio=new Audio(CONF.audio); audio.crossOrigin='anonymous'; audio.preload='auto'; }
   function makeProgress(x,y,w,h,bg,fill,knob){
     const g=px2(x,y,w,h), group=document.createElement('a-entity'); group.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
@@ -161,24 +255,67 @@
   }
   if(CONF.audio){ prog=makeProgress(CONF.progress.x,CONF.progress.y,CONF.progress.w,CONF.progress.h,CONF.progress.bg,CONF.progress.fill,CONF.progress.knob); root.appendChild(prog.group); }
 
-  function tryAudio(){ if(!audio) return; if(visible && userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; } else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; } }
+  // Ecualizador (16 barras) sobre la barra
+  function makeEQ(){
+    const n=16, pad=6; const g=px2(CONF.progress.x,CONF.progress.y-38,CONF.progress.w,38);
+    const wrap=document.createElement('a-entity'); wrap.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.11`);
+    const bw=(g.wn - (n-1)*(pad/CONF.pw))/n, bh=g.hn*1.9;
+    for(let i=0;i<n;i++){
+      const b=document.createElement('a-plane');
+      b.setAttribute('width',bw); b.setAttribute('height',Math.max(0.002,bh*0.1));
+      b.setAttribute('position',`${(bw+pad/CONF.pw)*i + bw/2} 0 0`);
+      b.setAttribute('material','shader:flat; color:#13d77a; transparent:true; opacity:0.95; depthTest:false');
+      wrap.appendChild(b); eqBars.push({el:b,maxH:bh});
+    }
+    root.appendChild(wrap);
+  }
+  if(CONF.audio) makeEQ();
+
+  function setupAudioGraph(){
+    if(!audio || analyser) return;
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=ctx.createMediaElementSource(audio);
+    analyser=ctx.createAnalyser(); analyser.fftSize=512; analyser.smoothingTimeConstant=0.85;
+    src.connect(analyser); analyser.connect(ctx.destination);
+  }
+
+  function tryAudio(){ if(!audio) return;
+    if(visible && userOK){ setupAudioGraph(); audio.play().catch(()=>{}); btnSound.hidden=true; }
+    else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; }
+  }
   btnSound.onclick=()=>{ userOK=true; tryAudio(); };
 
   // AR eventos
-  anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); tryAudio(); log('Target FOUND','ok'); });
+  anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); overlay.emit('show',null,false); videoGroup.emit('show',null,false); tryAudio(); log('Target FOUND','ok'); });
   anchor.addEventListener('targetLost',  ()=>{ visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST','warn'); });
 
-  // progreso audio
-  function tick(){ if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); } requestAnimationFrame(tick); }
+  // Ticks: progreso, reloj y ecualizador
+  const freq=new Uint8Array(256);
+  function tick(){
+    if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); }
+    if(timePlane && timePlane._drawTime && audio){ timePlane._drawTime(audio.currentTime||0, audio.duration||0);
+      const mesh=timePlane.getObject3D('mesh'); if(mesh && mesh.material && mesh.material.map){ mesh.material.map.needsUpdate=true; } }
+    if(analyser && eqBars.length){
+      analyser.getByteFrequencyData(freq);
+      // mapear 16 bandas
+      const step=Math.floor(freq.length/eqBars.length);
+      for(let i=0;i<eqBars.length;i++){
+        let sum=0; for(let j=0;j<step;j++) sum+=freq[i*step+j];
+        const avg=sum/step/255; const h=Math.max(0.02, avg*eqBars[i].maxH);
+        eqBars[i].el.setAttribute('height', h);
+      }
+    }
+    requestAnimationFrame(tick);
+  }
   requestAnimationFrame(tick);
 
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', e=>log('Error cámara/permisos '+(e?.detail||''),'err'));
 
-  // Botón: abrir cámara (evita bloqueos en algunos navegadores)
+  // Botón: abrir cámara (gesto de usuario)
   btnStart.onclick=async()=>{ try{ await scene.systems['mindar-image-system'].start(); btnStart.disabled=true; btnStart.textContent='Cámara lista'; log('Cámara iniciada','ok'); }catch(e){ log('No se pudo iniciar cámara: '+e,'err'); } };
 
-  // Primer toque para destrabar autoplay de vídeo
+  // Primer toque para destrabar autoplay de vídeo (y preparar contexto de audio)
   window.addEventListener('touchend', ()=>{ v1.play().catch(()=>{}); }, {once:true,passive:true});
 })();
 </script>
