@@ -3,32 +3,34 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>AR · Test visible</title>
+<title>AR · Test visible (forzado)</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara DOM en cover, detrás del canvas */
+  /* 1) Vídeo de cámara en cover, pero al FONDO */
   video[playsinline][autoplay]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000
+    object-fit:cover!important;z-index:0!important;background:#000!important
   }
+  /* 2) Canvas WebGL SIEMPRE por ENCIMA del vídeo */
+  a-scene{position:fixed!important;inset:0!important;z-index:2!important}
+  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
+  /* HUD debug */
   .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#9fb1d6;pointer-events:none;max-width:78vw}
+       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
 </style>
 </head>
 <body>
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
-  renderer="alpha:true;antialias:true;physicallyCorrectLights:true;logarithmicDepthBuffer:true"
+  renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
-
   <a-camera look-controls="enabled:false"></a-camera>
-
-  <!-- 8 anchors por si tu targetIndex no es 0 -->
+  <!-- 8 anclas por si tu target no es el índice 0 -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
   <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
@@ -38,80 +40,74 @@
   <a-entity id="a6" mindar-image-target="targetIndex:6"></a-entity>
   <a-entity id="a7" mindar-image-target="targetIndex:7"></a-entity>
 </a-scene>
-
 <div id="dbg" class="dbg">Cargando…</div>
 
 <script>
 (function(){
   const dbg = document.getElementById('dbg');
-  const log = (m,cls='')=>{
-    dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m);
-  };
+  const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   const q = new URLSearchParams(location.search);
-
-  const t  = q.get('t') || '';                     // URL del .mind (obligatorio)
-  const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
+  const t = q.get('t') || 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
+  const pw = +(q.get('pw')||2481), ph = +(q.get('ph')||3508), H = ph/pw;
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
-  // Cargar .mind remoto
-  const scene=document.getElementById('scene');
+  // Carga el .mind remoto
+  const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  // Crea contenido de TEST (siempre visible al detectar)
-  function mountTest(anchorEl, idx){
-    // Plano magenta que cubre TODO el target (ancho=1, alto=H), con pulso
-    const overlay=document.createElement('a-plane');
-    overlay.setAttribute('width',1);
-    overlay.setAttribute('height',H);
-    overlay.setAttribute('position','0 0 0');
-    overlay.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.35; transparent:true; side:double;');
-    overlay.setAttribute('animation__pulse','property:material.opacity; from:0.15; to:0.65; dir:alternate; loop:true; dur:700; easing:easeInOutSine');
-    anchorEl.appendChild(overlay);
+  // Contenido de TEST (visible al detectar)
+  function mountTest(anchor, idx){
+    // Plano magenta que CUBRE el target completo
+    const plane = document.createElement('a-plane');
+    plane.setAttribute('width', 1);
+    plane.setAttribute('height', H);
+    plane.setAttribute('position', '0 0 0');
+    plane.setAttribute('material', 'shader:flat; color:#ff00aa; opacity:0.45; transparent:true; side:double;');
+    plane.setAttribute('animation__pulse','property:material.opacity;from:0.25;to:0.75;dir:alternate;loop:true;dur:700;easing:easeInOutSine');
+    anchor.appendChild(plane);
 
-    // Cubo girando (bien visible)
-    const cube=document.createElement('a-box');
-    cube.setAttribute('position',`0 0 ${0.05}`);
-    cube.setAttribute('depth',0.05); cube.setAttribute('height',0.2); cube.setAttribute('width',0.2);
-    cube.setAttribute('color','#00ffd0');
-    cube.setAttribute('animation__rot','property: rotation; to: 0 360 0; loop: true; dur: 2000; easing: linear');
-    anchorEl.appendChild(cube);
+    // Cubo girando
+    const cube = document.createElement('a-box');
+    cube.setAttribute('position', `0 0 0.05`);
+    cube.setAttribute('width', 0.25); cube.setAttribute('height', 0.25); cube.setAttribute('depth', 0.05);
+    cube.setAttribute('material', 'shader:flat; color:#00ffd0; side:double;');
+    cube.setAttribute('animation__rot','property:rotation;to:0 360 0;loop:true;dur:2000;easing:linear');
+    anchor.appendChild(cube);
 
     // Texto con el índice detectado
-    const txt=document.createElement('a-text');
-    txt.setAttribute('value',`INDEX ${idx}`);
-    txt.setAttribute('color','#ffffff');
-    txt.setAttribute('align','center');
-    txt.setAttribute('width',1.5);
-    txt.setAttribute('position',`0 ${-H/2+0.12} 0.06`);
-    anchorEl.appendChild(txt);
+    const txt = document.createElement('a-text');
+    txt.setAttribute('value', `INDEX ${idx}`);
+    txt.setAttribute('color', '#ffffff');
+    txt.setAttribute('align', 'center');
+    txt.setAttribute('width', 1.5);
+    txt.setAttribute('position', `0 ${-H/2 + 0.12} 0.06`);
+    anchor.appendChild(txt);
 
-    // Eventos
-    anchorEl.addEventListener('targetFound', ()=> log('TARGET FOUND en índice '+idx,'ok'));
-    anchorEl.addEventListener('targetLost',  ()=> log('Perdido índice '+idx,'warn'));
+    anchor.addEventListener('targetFound', ()=> log('TARGET FOUND en índice '+idx,'ok'));
+    anchor.addEventListener('targetLost',  ()=> log('Perdido índice '+idx,'warn'));
   }
 
-  // Montamos test en TODOS los anchors
-  for(let i=0;i<8;i++){
-    const a=document.getElementById('a'+i);
-    if(a) mountTest(a,i);
-  }
+  // Monta test en TODOS los anchors
+  for(let i=0;i<8;i++){ const a=document.getElementById('a'+i); if(a) mountTest(a,i); }
 
-  // Forzar cover del stream de cámara del DOM (por si el navegador no lo hace)
-  const mo=new MutationObserver(()=>{
+  // Asegurar que el vídeo de cámara queda detrás del canvas (por si el navegador lo inyecta después)
+  const mo = new MutationObserver(()=>{
     document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
       v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
       v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='0'; v.style.background='#000';
     });
+    const canvas = document.querySelector('canvas.a-canvas'); if(canvas){
+      canvas.style.zIndex='3'; canvas.style.position='fixed'; canvas.style.inset='0';
+    }
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
-  scene.addEventListener('arReady',()=>log('Cámara OK'));
+  scene.addEventListener('arReady', ()=>log('Cámara OK'));
   scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 })();
 </script>
 </body>
 </html>
-
