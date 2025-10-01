@@ -16,7 +16,6 @@
   /* Canvas WebGL SIEMPRE ENCIMA */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  /* UI */
   .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
        padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
@@ -35,7 +34,7 @@
 
   <a-camera look-controls="enabled:false"></a-camera>
 
-  <!-- 8 anchors -->
+  <!-- Anchors (no montamos contenido aún) -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
   <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
@@ -63,24 +62,22 @@
   const debugRects = q.get('debugRects')==='1';
   const dx = +(q.get('dx')||0), dy=+(q.get('dy')||0), sc=+(q.get('scale')||1), rot=+(q.get('rot')||0);
 
-  // Vídeos
+  // Vídeo (1..3)
   const vSlots=[1,2,3].map(i=>({id:i,v:q.get('v'+i),x:+q.get('x'+i)||0,y:+q.get('y'+i)||0,w:+q.get('vw'+i)||0,h:+q.get('vh'+i)||0}))
     .filter(s=>s.v&&s.w>0&&s.h>0);
 
-  // Textos
+  // Textos (1..5)
   const tSlots=[1,2,3,4,5].map(i=>{
     const val=q.get('t'+i); if(!val) return null;
     return {id:i,text:decodeURIComponent(val),x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,align:(q.get('ta'+i)||'center'),color:'#'+(q.get('tc'+i)||'000000')};
   }).filter(Boolean);
 
-  // Audio + progreso
+  // Audio + barra de progreso
   const audioSrc=q.get('audio')||'';
   const pbx=+(q.get('pbx')||300), pby=+(q.get('pby')||2640), pbw=+(q.get('pbw')||2060), pbh=+(q.get('pbh')||14);
-  const pbc='#'+(q.get('pbc')||'000000');   // color barra bg
-  const pbf='#'+(q.get('pbf')||'00ff90');   // color barra fill
-  const pkn='#'+(q.get('pkn')||'000000');   // color knob
-
-  let audioEl=null, audioWanted=false, progress=null;
+  const pbc='#'+(q.get('pbc')||'000000');
+  const pbf='#'+(q.get('pbf')||'13d77a');
+  const pkn='#'+(q.get('pkn')||'000000');
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
@@ -88,9 +85,37 @@
   scene.setAttribute('mindar-image',`imageTargetSrc:${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  // Utilidades
-  const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
+  // ===== ASSETS ÚNICOS (no duplicar por anchor) =====
+  const assets = document.createElement('a-assets');
+  assets.id='assets'; assets.setAttribute('timeout','60000'); scene.appendChild(assets);
 
+  // overlay img (única)
+  if(d && !overlayDebug){
+    const img=document.createElement('img');
+    img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
+  }
+
+  // videos únicos
+  const videoEls={};
+  vSlots.forEach(s=>{
+    const v=document.createElement('video');
+    v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v;
+    assets.appendChild(v); videoEls[s.id]=v;
+  });
+
+  // audio único
+  let audioEl=null, userApprovedAudio=false, targetVisible=false;
+  if(audioSrc){
+    audioEl=new Audio(audioSrc);
+    audioEl.crossOrigin='anonymous';
+    audioEl.preload='auto';
+    audioEl.loop=false;
+    audioEl.volume=1.0;
+  }
+
+  // ===== Helpers =====
+  const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
   const makeRoot=()=>{
     const root=document.createElement('a-entity');
     root.setAttribute('position', `${dx/pw} ${-dy/pw} 0`);
@@ -99,56 +124,58 @@
     root.setAttribute('animation__pop','property:scale; from:'+(0.97*sc)+' '+(0.97*sc)+' 1; to:'+sc+' '+sc+' 1; dur:280; easing:easeOutQuad; startEvents:pop');
     return root;
   };
-
-  // Overlay
   const buildOverlay=()=>{
-    const p=document.createElement('a-plane'); p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
+    const p=document.createElement('a-plane');
+    p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
     if(!d||overlayDebug){
       p.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.30; transparent:true; side:double;');
     }else{
-      const assets=document.getElementById('assets-overlay')||(()=>{const el=document.createElement('a-assets'); el.id='assets-overlay'; el.setAttribute('timeout','30000'); scene.appendChild(el); return el;})();
-      const img=document.createElement('img'); img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
       p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:1; side:double;');
     }
     return p;
   };
-
-  // Vídeo COVER
-  function buildVideoSlot(s){
-    const assets=document.getElementById('assets-videos')||(()=>{const el=document.createElement('a-assets'); el.id='assets-videos'; el.setAttribute('timeout','60000'); scene.appendChild(el); return el;})();
-    const v=document.createElement('video'); v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v; assets.appendChild(v);
+  const buildVideoPlane=(s)=>{
     const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
-    const plane=document.createElement('a-plane'); plane.setAttribute('width',wn); plane.setAttribute('height',hn);
+    const plane=document.createElement('a-plane');
+    plane.setAttribute('width',wn); plane.setAttribute('height',hn);
     plane.setAttribute('position',`${cx} ${cy} 0.05`);
     plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
-    function cover(){ const mesh=plane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
+    function cover(){ const mesh=plane.getObject3D('mesh'); const v=videoEls[s.id];
+      if(!mesh||!mesh.material||!mesh.material.map||!v||!v.videoWidth) return;
       const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h; let rx=1,ry=1,ox=0,oy=0;
       if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true; log(`COVER v${s.id}`,'ok'); }
+      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+    }
     plane.addEventListener('materialtextureloaded',cover);
-    v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
-    const group=document.createElement('a-entity'); group.appendChild(plane);
-    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.051`); wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
-    return {group,video:v};
-  }
-
-  // Texto SDF (forzado arriba del overlay)
-  function buildTextSlot(s){
+    // al cargar metadata de ese <video>, ajustar cover
+    const v=videoEls[s.id]; if(v){ v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true}); }
+    if(debugRects){
+      const wire=document.createElement('a-plane');
+      wire.setAttribute('width',wn); wire.setAttribute('height',hn);
+      wire.setAttribute('position',`${cx} ${cy} 0.051`);
+      wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double;');
+      plane.appendChild(wire);
+    }
+    return plane;
+  };
+  const buildText=(s)=>{
     const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
     const e=document.createElement('a-entity');
     e.setAttribute('text', `value:${s.text}; align:${s.align}; color:${s.color}; width:${wn}; wrapCount:36; baseline:center;`);
-    e.setAttribute('position', `${cx} ${cy} 0.12`);
-    // truco: que no escriba en el depth buffer → siempre visible
-    e.setAttribute('material','depthTest:false; transparent:true; opacity:1; side:double');
-    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`0 0 -0.001`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.9; side:double;'); e.appendChild(wire); }
+    e.setAttribute('position', `${cx} ${cy} 0.12`); // SIEMPRE por encima
+    // truco: por si acaso el msdf hace depthTest, levantamos z y añadimos un plano transparente detrás
+    if(debugRects){
+      const wire=document.createElement('a-plane');
+      wire.setAttribute('width',wn); wire.setAttribute('height',hn);
+      wire.setAttribute('position',`0 0 -0.001`);
+      wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.9; side:double;');
+      e.appendChild(wire);
+    }
     return e;
-  }
-
-  // Barra de progreso + knob (sincronizada con audio)
-  function buildProgress(x,y,w,h){
+  };
+  const buildProgress=(x,y,w,h,pbc,pbf,pkn)=>{
     const {wn,hn,cx,cy}=pxToUnits(x,y,w,h);
-    const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.09`); // origen a la IZQUIERDA
+    const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.09`);
     const bg=document.createElement('a-plane'); bg.setAttribute('width',wn); bg.setAttribute('height',hn);
     bg.setAttribute('material',`shader:flat; color:${pbc}; transparent:true; opacity:0.9; side:double`);
     bg.setAttribute('position',`${wn/2} 0 0`);
@@ -158,44 +185,66 @@
     const knob=document.createElement('a-circle'); knob.setAttribute('radius',hn*0.9/2);
     knob.setAttribute('material',`shader:flat; color:${pkn}; side:double`); knob.setAttribute('position',`0 0 0.002`);
     g.appendChild(bg); g.appendChild(fill); g.appendChild(knob);
-    return {group:g, setProgress:(p)=>{ const clamped=Math.max(0,Math.min(1,p||0)); const wnow=wn*clamped; fill.setAttribute('width', wnow); fill.setAttribute('position',`${wnow/2} 0 0.001`); knob.setAttribute('position',`${wnow} 0 0.002`);} };
-  }
+    return {group:g, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); const wnow=wn*c; fill.setAttribute('width', wnow); fill.setAttribute('position',`${wnow/2} 0 0.001`); knob.setAttribute('position',`${wnow} 0 0.002`);} };
+  };
 
-  // Audio
-  if(audioSrc){
-    audioEl=new Audio(audioSrc); audioEl.crossOrigin='anonymous'; audioEl.preload='auto'; audioEl.loop=false; audioEl.volume=1.0;
-    audioWanted=true; btnSound.hidden=false;
-  }
-  btnSound.onclick=()=>{ if(audioEl){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); } };
+  // ===== Construcción diferida: solo en el PRIMER anchor que detecte =====
+  let built=false, activeAnchor=null, progress=null;
+  const anchors=[...Array(8)].map((_,i)=>document.getElementById('a'+i)).filter(Boolean);
 
-  // Montaje por anchor
-  for(let i=0;i<8;i++){
-    const a=document.getElementById('a'+i); if(!a) continue;
-    const root=makeRoot(); a.appendChild(root);
+  function buildInto(anchor){
+    if(built) return;
+    built=true; activeAnchor=anchor;
+
+    const root=makeRoot(); anchor.appendChild(root);
+
+    // overlay
     const overlay=buildOverlay(); root.appendChild(overlay);
 
-    // Vídeos
-    const vobjs=vSlots.map(buildVideoSlot); vobjs.forEach(o=>o&&root.appendChild(o.group));
+    // vídeos (planos referenciando los <video> únicos)
+    vSlots.forEach(s=> root.appendChild( buildVideoPlane(s) ));
 
-    // Textos
-    const tobjs=tSlots.map(buildTextSlot);  tobjs.forEach(o=>o&&root.appendChild(o));
+    // textos
+    tSlots.forEach(s=> root.appendChild( buildText(s) ));
 
-    // Progreso (si hay audio)
-    if(audioSrc){
-      progress = buildProgress(pbx,pby,pbw,pbh); root.appendChild(progress.group);
+    // progreso de audio (si hay audio)
+    if(audioEl){
+      const pbx=+(q.get('pbx')||300), pby=+(q.get('pby')||2640), pbw=+(q.get('pbw')||2060), pbh=+(q.get('pbh')||14);
+      progress=buildProgress(pbx,pby,pbw,pbh,pbc,pbf,pkn); root.appendChild(progress.group);
     }
+  }
 
+  // Gestión de audio: solo suena con target visible y permiso previo
+  function tryStartAudio(){
+    if(!audioEl) return;
+    if(targetVisible && userApprovedAudio){
+      audioEl.play().catch(()=>{});
+      btnSound.hidden=true;
+    }else{
+      audioEl.pause();
+      if(targetVisible && !userApprovedAudio) btnSound.hidden=false;
+    }
+  }
+  btnSound.onclick=()=>{ userApprovedAudio=true; tryStartAudio(); };
+
+  anchors.forEach((a,i)=>{
     a.addEventListener('targetFound', ()=>{
-      log('TARGET FOUND idx '+i,'ok'); root.emit('pop',null,false);
-      vobjs.forEach(o=>o && o.video && o.video.play && o.video.play().catch(()=>{}));
-      if(audioEl && audioWanted){ btnSound.hidden=false; }
+      targetVisible=true;
+      if(!built) buildInto(a);
+      // play vídeos
+      Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{}));
+      // audio control
+      tryStartAudio();
+      log('TARGET FOUND idx '+i,'ok');
     });
     a.addEventListener('targetLost', ()=>{
-      vobjs.forEach(o=>o && o.video && o.video.pause && o.video.pause());
-      if(audioEl){ audioEl.pause(); btnSound.hidden=false; }
+      targetVisible=false;
+      Object.values(videoEls).forEach(v=>v && v.pause && v.pause());
+      if(audioEl) audioEl.pause();
+      if(audioEl && userApprovedAudio) btnSound.hidden=false; // deja botón visible por si reescanea
       log('Perdido idx '+i,'warn');
     });
-  }
+  });
 
   // Z-index cámara OK
   const mo=new MutationObserver(()=>{
@@ -207,10 +256,10 @@
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
-  // Sincroniza progreso con audio
+  // Progreso animado (si hay audio)
   function tick(){
     if(audioEl && progress && audioEl.duration>0){
-      progress.setProgress(audioEl.currentTime / audioEl.duration);
+      progress.set(audioEl.currentTime / audioEl.duration);
     }
     requestAnimationFrame(tick);
   }
@@ -219,11 +268,12 @@
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 
-  // Primer toque: intentar reproducir (algunos navegadores exigen gesto)
+  // Primer toque: habilitar reproducción si el navegador lo exige
   window.addEventListener('touchend', ()=>{
-    document.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
-    if(audioEl && audioWanted){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); }
+    Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{}));
+    if(!userApprovedAudio && audioEl){ /* espera al botón */ }
   }, {once:true,passive:true});
+
 })();
 </script>
 </body>
