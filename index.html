@@ -3,298 +3,184 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Overlay + Vídeo + Texto + Audio</title>
+<title>Poster AR · Failsafe</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara en cover DETRÁS del canvas */
-  video[playsinline]{
-    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important
-  }
-  /* Canvas WebGL ENCIMA */
+  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important}
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-
-  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
+  .ui{position:fixed;inset:0;display:flex;gap:10px;align-items:flex-start;padding:10px;z-index:4}
+  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:12px;padding:10px 14px}
+  .dbg{margin-left:auto;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;
+       color:#cfe3ff;font:12px/1.35 system-ui;max-width:60vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
-  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;
-         color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
-  .sound[hidden]{display:none}
 </style>
 </head>
 <body>
+<div class="ui">
+  <button id="btnStart" class="btn">📷 Abrir cámara</button>
+  <button id="btnSound" class="btn" hidden>🔊 Activar sonido</button>
+  <div id="dbg" class="dbg">Cargando…</div>
+</div>
+
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
 
   <a-assets id="assets" timeout="60000">
     <img id="overlayImg" crossorigin="anonymous"/>
-    <video id="v1" playsinline webkit-playsinline muted loop preload="auto" crossorigin="anonymous"></video>
-    <video id="v2" playsinline webkit-playsinline muted loop preload="auto" crossorigin="anonymous"></video>
-    <video id="v3" playsinline webkit-playsinline muted loop preload="auto" crossorigin="anonymous"></video>
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera look-controls="enabled:false"></a-camera>
-
-  <!-- Anchors (construyo en el primero que detecte) -->
-  <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
-  <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
-  <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
-  <a-entity id="a3" mindar-image-target="targetIndex:3"></a-entity>
-  <a-entity id="a4" mindar-image-target="targetIndex:4"></a-entity>
-  <a-entity id="a5" mindar-image-target="targetIndex:5"></a-entity>
-  <a-entity id="a6" mindar-image-target="targetIndex:6"></a-entity>
-  <a-entity id="a7" mindar-image-target="targetIndex:7"></a-entity>
+  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
-
-<button id="btnSound" class="sound" hidden>🔊 Activar sonido</button>
-<div id="dbg" class="dbg">Cargando…</div>
 
 <script>
 (function(){
-  const dbg = document.getElementById('dbg'), btnSound = document.getElementById('btnSound');
-  const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
+  const dbg = document.getElementById('dbg'), btnStart=document.getElementById('btnStart'), btnSound=document.getElementById('btnSound');
+  const log=(m,c='')=>{ dbg.innerHTML=(c?`<span class="${c}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   window.onerror=(msg,src,line,col)=>log('JS ERROR: '+msg+' @'+line+':'+col,'err');
 
-  const q = new URLSearchParams(location.search);
-  const t  = q.get('t') || '';
-  const d  = q.get('d') || '';                            // overlay (PNG/JPG)
-  const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508); // tamaño base px
-  const H  = ph/pw;                                       // alto normalizado (ancho=1)
-  const overlayDebug = q.get('overlayDebug')==='1';
-  const debugRects   = q.get('debugRects')==='1';
-  const parallaxOn   = q.get('parallax')==='on';
+  // ---------- CONFIG FIJA (TU CASO) ----------
+  const CONF = {
+    t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
+    d: 'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png',
+    pw: 2481, ph: 3508,
+    video: {
+      src: 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
+      x: 296, y: 316, w: 1890, h: 1682
+    },
+    texts: [
+      { text:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
+      { text:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' },
+      { text:'3:45            4:49', x:200, y:2550, w:2080, h:120, align:'center', color:'#000000' }
+    ],
+    audio: 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3',
+    progress: { x:300, y:2640, w:2060, h:14, bg:'#000000', fill:'#13d77a', knob:'#000000' },
+    // ajustes globales (encuadre fino)
+    dx:0, dy:0, scale:1, rot:0, parallax:false
+  };
+  // -------------------------------------------
 
-  // Ajustes globales (encuadre fino)
-  const dx = +(q.get('dx')||0), dy=+(q.get('dy')||0), sc=+(q.get('scale')||1), rot=+(q.get('rot')||0);
-
-  // Vídeos (1..3)
-  const vSlots=[1,2,3].map(i=>({id:i,v:q.get('v'+i),x:+q.get('x'+i)||0,y:+q.get('y'+i)||0,w:+q.get('vw'+i)||0,h:+q.get('vh'+i)||0}))
-    .filter(s=>s.v&&s.w>0&&s.h>0);
-
-  // Textos (canvas 1..5)
-  const tSlots=[1,2,3,4,5].map(i=>{
-    const val=q.get('t'+i); if(!val) return null;
-    return {id:i,text:decodeURIComponent(val),x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,
-            align:(q.get('ta'+i)||'center'), color:'#'+(q.get('tc'+i)||'000000')};
-  }).filter(Boolean);
-
-  // Audio + barra
-  const audioSrc=q.get('audio')||'';
-  const pbx=+(q.get('pbx')||300), pby=+(q.get('pby')||2640), pbw=+(q.get('pbw')||2060), pbh=+(q.get('pbh')||14);
-  const pbc='#'+(q.get('pbc')||'000000'), pbf='#'+(q.get('pbf')||'13d77a'), pkn='#'+(q.get('pkn')||'000000');
-
-  if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
   const scene=document.getElementById('scene');
-  scene.setAttribute('mindar-image',`imageTargetSrc:${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
-  scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} });
-  log('Cargado .mind desde URL','ok');
+  // Enlaza .mind
+  scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
+  scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} log('Scene lista','ok'); });
 
-  // ===== ASSETS (únicos) =====
-  const assets=document.getElementById('assets');
-  const overlayImg=document.getElementById('overlayImg');
-  if(d && !overlayDebug){ overlayImg.src=d; }
-  const videoEls={ 1:document.getElementById('v1'), 2:document.getElementById('v2'), 3:document.getElementById('v3') };
-  vSlots.forEach(s=>{ videoEls[s.id].src=s.v; });
-
-  // ===== HELPERs =====
-  const THREE = AFRAME.THREE;
-  const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
-
-  const makeRoot=()=>{
-    const root=document.createElement('a-entity');
-    root.setAttribute('position', `${dx/pw} ${-dy/pw} 0`);
-    root.setAttribute('scale', `${sc} ${sc} 1`);
-    if(rot) root.setAttribute('rotation',`0 0 ${rot}`);
-    // leve pop al detectar
-    root.setAttribute('animation__pop','property:scale; from:'+(0.965*sc)+' '+(0.965*sc)+' 1; to:'+sc+' '+sc+' 1; dur:260; easing:easeOutQuad; startEvents:pop');
-    if(parallaxOn){
-      // parallax muy suave (look-at cámara)
-      root.setAttribute('look-at','[camera]');
-      root.setAttribute('animation__par','property:rotation; dir:alternate; to:0 0 -0.5; dur:1200; loop:true; easing:easeInOutSine');
-    }
-    return root;
-  };
-
-  const buildOverlay=()=>{
-    const p=document.createElement('a-plane');
-    p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0.0');
-    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
-    p.addEventListener('loaded', ()=>{
-      const mesh=p.getObject3D('mesh'); if(mesh) mesh.renderOrder=10;
-    });
-    if(overlayDebug || !d){
-      p.setAttribute('material','shader:flat; color:#00ffaa; transparent:true; opacity:0.28; side:double; depthTest:false');
-    }else{
-      p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:0; side:double; depthTest:false');
-    }
-    // fade-in
-    p.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:340; easing:easeOutQuad; startEvents:show');
-    return p;
-  };
-
-  const buildVideoPlane=(s)=>{
-    const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
-    const plane=document.createElement('a-plane');
-    plane.setAttribute('width',wn); plane.setAttribute('height',hn);
-    plane.setAttribute('position',`${cx} ${cy} 0.03`);
-    plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double; depthTest:false; opacity:1`);
-    plane.addEventListener('loaded', ()=>{ const mesh=plane.getObject3D('mesh'); if(mesh) mesh.renderOrder=20; });
-    // POP sutil
-    plane.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:220; easing:easeOutQuad; startEvents:pop');
-    // COVER
-    function cover(){ const mesh=plane.getObject3D('mesh'); const v=videoEls[s.id];
-      if(!mesh||!mesh.material||!mesh.material.map||!v||!v.videoWidth) return;
-      const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h; let rx=1,ry=1,ox=0,oy=0;
-      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
-    }
-    plane.addEventListener('materialtextureloaded',cover);
-    const v=videoEls[s.id]; if(v){ v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true}); }
-    if(debugRects){
-      const wire=document.createElement('a-plane');
-      wire.setAttribute('width',wn); wire.setAttribute('height',hn);
-      wire.setAttribute('position',`${cx} ${cy} 0.031`);
-      wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double; depthTest:false');
-      plane.appendChild(wire);
-    }
-    return plane;
-  };
-
-  // === Textos con CANVAS → textura (siempre visibles) ===
-  function makeTextCanvas(text,color,align,wpx,hpx){
-    const scale=2, cw=Math.max(64, Math.min(2048, Math.round(wpx*scale))), ch=Math.max(32, Math.min(1024, Math.round(hpx*scale)));
-    const c=document.createElement('canvas'); c.width=cw; c.height=ch;
-    const ctx=c.getContext('2d');
-    ctx.clearRect(0,0,cw,ch);
-    ctx.fillStyle=color;
-    ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=Math.floor(ch*0.06); ctx.shadowOffsetY=Math.floor(ch*0.03);
-    // Ajuste binario de tamaño
-    const family='600 64px "Inter", system-ui, -apple-system, Segoe UI, Roboto';
-    let size=Math.floor(ch*0.72), lo=12, hi=Math.floor(ch*0.9), pad=Math.floor(cw*0.04);
-    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=family.replace('64px', mid+'px'); const m=ctx.measureText(text);
-      if(m.width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
-    ctx.font=family.replace('64px', size+'px');
-    ctx.textBaseline='middle';
-    ctx.textAlign=(align==='left'?'left':align==='right'?'right':'center');
-    const x=(align==='left')?pad:(align==='right')?(cw-pad):(cw/2), y=ch/2;
-    ctx.fillText(text,x,y);
-    return c;
-  }
-  function buildTextPlane(s){
-    const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
-    const canvas=makeTextCanvas(s.text,s.color,s.align,s.w,s.h);
-    const p=document.createElement('a-plane');
-    p.setAttribute('width',wn); p.setAttribute('height',hn);
-    p.setAttribute('position', `${cx} ${cy} 0.12`);
-    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
-    p.addEventListener('loaded', ()=>{
-      try{
-        const mesh=p.getObject3D('mesh'); if(!mesh) return;
-        const tex=new THREE.CanvasTexture(canvas); tex.needsUpdate=true;
-        mesh.material.map=tex; mesh.material.needsUpdate=true; mesh.renderOrder=30;
-        p.emit('show',null,false);
-      }catch(e){ log('Text canvas err '+e,'err'); }
-    });
-    // animaciones
-    p.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:260; easing:easeOutQuad; startEvents:show');
-    p.setAttribute('animation__slide','property:position; to:'+cx+' '+(cy+0.003)+' 0.12; dir:alternate; loop:true; dur:900; easing:easeInOutSine');
-    if(debugRects){
-      const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn);
-      wire.setAttribute('position',`0 0 -0.001`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.8; side:double; depthTest:false');
-      p.appendChild(wire);
-    }
-    return p;
-  }
-
-  function buildProgress(x,y,w,h,pbc,pbf,pkn){
-    const {wn,hn,cx,cy}=pxToUnits(x,y,w,h);
-    const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.09`);
-    const bg=document.createElement('a-plane'); bg.setAttribute('width',wn); bg.setAttribute('height',hn);
-    bg.setAttribute('material',`shader:flat; color:${pbc}; transparent:true; opacity:0.9; side:double; depthTest:false`);
-    bg.setAttribute('position',`${wn/2} 0 0`);
-    const fill=document.createElement('a-plane'); fill.setAttribute('width',0.0001); fill.setAttribute('height',hn);
-    fill.setAttribute('material',`shader:flat; color:${pbf}; transparent:true; opacity:1; side:double; depthTest:false`);
-    fill.setAttribute('position',`0 0 0.001`);
-    const knob=document.createElement('a-circle'); knob.setAttribute('radius',hn*0.9/2);
-    knob.setAttribute('material',`shader:flat; color:${pkn}; side:double; depthTest:false`); knob.setAttribute('position',`0 0 0.002`);
-    g.appendChild(bg); g.appendChild(fill); g.appendChild(knob);
-    let smooth=0;
-    return {group:g, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); smooth = smooth*0.85 + c*0.15;
-      const wnow=wn*smooth; fill.setAttribute('width', wnow); fill.setAttribute('position',`${wnow/2} 0 0.001`); knob.setAttribute('position',`${wnow} 0 0.002`);} };
-  }
-
-  // ===== Construcción diferida: primer anchor =====
-  let built=false, progress=null, audioEl=null, userApproved=false, targetVisible=false;
-  if(audioSrc){ audioEl=new Audio(audioSrc); audioEl.crossOrigin='anonymous'; audioEl.preload='auto'; audioEl.loop=false; }
-
-  const anchors=[...Array(8)].map((_,i)=>document.getElementById('a'+i)).filter(Boolean);
-
-  function buildInto(anchor){
-    if(built) return; built=true;
-    const root=makeRoot(); anchor.appendChild(root); root.emit('pop',null,false);
-
-    const overlay=buildOverlay(); root.appendChild(overlay); overlay.emit('show',null,false);
-
-    vSlots.forEach(s=>{ const v=buildVideoPlane(s); root.appendChild(v); v.emit('pop',null,false); });
-
-    tSlots.forEach(s=>{ const tp=buildTextPlane(s); root.appendChild(tp); }); // fade se dispara en loaded
-
-    if(audioEl){ progress=buildProgress(pbx,pby,pbw,pbh,pbc,pbf,pkn); root.appendChild(progress.group); }
-  }
-
-  function tryStartAudio(){
-    if(!audioEl) return;
-    if(targetVisible && userApproved){ audioEl.play().catch(()=>{}); btnSound.hidden=true; }
-    else { audioEl.pause(); if(targetVisible && !userApproved) btnSound.hidden=false; }
-  }
-  btnSound.onclick=()=>{ userApproved=true; tryStartAudio(); };
-
-  anchors.forEach((a,i)=>{
-    a.addEventListener('targetFound', ()=>{
-      targetVisible=true;
-      if(!built) buildInto(a);
-      Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{}));
-      tryStartAudio();
-      log('TARGET FOUND idx '+i,'ok');
-    });
-    a.addEventListener('targetLost', ()=>{
-      targetVisible=false;
-      Object.values(videoEls).forEach(v=>v && v.pause && v.pause());
-      if(audioEl) audioEl.pause();
-      if(audioEl && userApproved) btnSound.hidden=false;
-      log('Perdido idx '+i,'warn');
-    });
-  });
-
-  // Asegurar cámara cover
-  const mo=new MutationObserver(()=>{
-    document.querySelectorAll('video').forEach(v=>{
-      if(v.srcObject instanceof MediaStream){
-        v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
-        v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='0';
-      }
-    });
-  });
+  // Cámara en cover
+  const mo=new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{ if(v.srcObject instanceof MediaStream){
+    Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'}); }}); });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
+  // Assets
+  overlayImg.src = CONF.d || '';
+  const v1=document.getElementById('v1'); v1.src=CONF.video.src;
+
+  // Helpers
+  const px2 = (x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw,
+    cx:-0.5+(x+w/2)/CONF.pw, cy:(CONF.ph/CONF.pw)/2 - (y+h/2)/CONF.pw });
+
+  // Construcción sobre el anchor
+  const anchor=document.getElementById('anchor');
+  const root=document.createElement('a-entity');
+  root.setAttribute('position', `${CONF.dx/CONF.pw} ${-CONF.dy/CONF.pw} 0`);
+  root.setAttribute('scale', `${CONF.scale} ${CONF.scale} 1`);
+  if(CONF.rot) root.setAttribute('rotation',`0 0 ${CONF.rot}`);
+  if(CONF.parallax) root.setAttribute('look-at','[camera]');
+  anchor.appendChild(root);
+
+  // Overlay
+  const overlay=document.createElement('a-plane');
+  overlay.setAttribute('width',1); overlay.setAttribute('height', CONF.ph/CONF.pw);
+  overlay.setAttribute('position','0 0 0');
+  overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa; opacity:0.25;'} transparent:true; side:double; depthTest:false; opacity:1`);
+  overlay.addEventListener('loaded', ()=>{ const m=overlay.getObject3D('mesh'); if(m) m.renderOrder=10; });
+  root.appendChild(overlay);
+
+  // Vídeo
+  const vs = CONF.video; const u = px2(vs.x,vs.y,vs.w,vs.h);
+  const vPlane=document.createElement('a-plane');
+  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
+  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
+  vPlane.addEventListener('loaded', ()=>{ const m=vPlane.getObject3D('mesh'); if(m) m.renderOrder=20; });
+  function cover(){
+    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
+    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vs.w/vs.h; let rx=1,ry=1,ox=0,oy=0;
+    if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+    tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+  }
+  vPlane.addEventListener('materialtextureloaded',cover);
+  v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
+  root.appendChild(vPlane);
+
+  // Textos (canvas -> textura)
+  const THREE=AFRAME.THREE;
+  function textCanvas(txt,color,align,w,h){
+    const scale=2, cw=Math.max(64,Math.min(2048,Math.round(w*scale))), ch=Math.max(32,Math.min(1024,Math.round(h*scale)));
+    const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
+    ctx.fillStyle=color; ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=Math.floor(ch*0.06); ctx.shadowOffsetY=Math.floor(ch*0.03);
+    const fam='600 64px "Inter",system-ui,-apple-system,Segoe UI,Roboto'; let size=Math.floor(ch*0.72), lo=12, hi=Math.floor(ch*0.9), pad=Math.floor(cw*0.04);
+    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=fam.replace('64px',mid+'px'); if(ctx.measureText(txt).width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
+    ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle'; ctx.textAlign=(align==='left'?'left':align==='right'?'right':'center');
+    const x=(align==='left')?pad:(align==='right')?(cw-pad):(cw/2), y=ch/2; ctx.fillText(txt,x,y); return c;
+  }
+  function textPlane(s, z=0.12){
+    const g=px2(s.x,s.y,s.w,s.h), p=document.createElement('a-plane');
+    p.setAttribute('width',g.wn); p.setAttribute('height',g.hn); p.setAttribute('position',`${g.cx} ${g.cy} ${z}`);
+    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+    p.addEventListener('loaded',()=>{ const mesh=p.getObject3D('mesh'); if(!mesh) return;
+      const tex=new THREE.CanvasTexture(textCanvas(s.text,s.color,s.align,s.w,s.h));
+      mesh.material.map=tex; mesh.material.needsUpdate=true; mesh.renderOrder=30; });
+    return p;
+  }
+  CONF.texts.forEach(t=>root.appendChild(textPlane(t)));
+
+  // Audio + progreso
+  let audio=null, userOK=false, visible=false, prog=null;
+  if(CONF.audio){ audio=new Audio(CONF.audio); audio.crossOrigin='anonymous'; audio.preload='auto'; }
+  function makeProgress(x,y,w,h,bg,fill,knob){
+    const g=px2(x,y,w,h), group=document.createElement('a-entity'); group.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
+    const bgp=document.createElement('a-plane'); bgp.setAttribute('width',g.wn); bgp.setAttribute('height',g.hn);
+    bgp.setAttribute('material',`shader:flat; color:${bg}; transparent:true; opacity:0.9; side:double; depthTest:false`);
+    bgp.setAttribute('position',`${g.wn/2} 0 0`);
+    const fillp=document.createElement('a-plane'); fillp.setAttribute('width',0.0001); fillp.setAttribute('height',g.hn);
+    fillp.setAttribute('material',`shader:flat; color:${fill}; transparent:true; side:double; depthTest:false`);
+    fillp.setAttribute('position',`0 0 0.001`);
+    const knobp=document.createElement('a-circle'); knobp.setAttribute('radius',g.hn*0.9/2);
+    knobp.setAttribute('material',`shader:flat; color:${knob}; side:double; depthTest:false`); knobp.setAttribute('position',`0 0 0.002`);
+    group.appendChild(bgp); group.appendChild(fillp); group.appendChild(knobp);
+    let s=0; return {group, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); s=s*0.85+c*0.15; const wnow=g.wn*s; fillp.setAttribute('width',wnow); fillp.setAttribute('position',`${wnow/2} 0 0.001`); knobp.setAttribute('position',`${wnow} 0 0.002`);} };
+  }
+  if(CONF.audio){ prog=makeProgress(CONF.progress.x,CONF.progress.y,CONF.progress.w,CONF.progress.h,CONF.progress.bg,CONF.progress.fill,CONF.progress.knob); root.appendChild(prog.group); }
+
+  function tryAudio(){ if(!audio) return; if(visible && userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; } else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; } }
+  btnSound.onclick=()=>{ userOK=true; tryAudio(); };
+
+  // AR eventos
+  anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); tryAudio(); log('Target FOUND','ok'); });
+  anchor.addEventListener('targetLost',  ()=>{ visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST','warn'); });
+
   // progreso audio
-  function tick(){ if(audioEl && progress && audioEl.duration>0){ progress.set(audioEl.currentTime / audioEl.duration); } requestAnimationFrame(tick); }
+  function tick(){ if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); } requestAnimationFrame(tick); }
   requestAnimationFrame(tick);
 
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', e=>log('Error cámara/permisos '+(e?.detail||''),'err'));
 
-  // Primer toque para autoplay
-  window.addEventListener('touchend', ()=>{ Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{})); }, {once:true,passive:true});
+  // Botón: abrir cámara (evita bloqueos en algunos navegadores)
+  btnStart.onclick=async()=>{ try{ await scene.systems['mindar-image-system'].start(); btnStart.disabled=true; btnStart.textContent='Cámara lista'; log('Cámara iniciada','ok'); }catch(e){ log('No se pudo iniciar cámara: '+e,'err'); } };
+
+  // Primer toque para destrabar autoplay de vídeo
+  window.addEventListener('touchend', ()=>{ v1.play().catch(()=>{}); }, {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
-
