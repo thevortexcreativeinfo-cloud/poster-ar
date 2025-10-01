@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>AR · Test visible (forzado)</title>
+<title>Poster AR · Overlay + Vídeo (estable)</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* 1) Vídeo de cámara en cover, pero al FONDO */
+  /* Cámara en cover, DETRÁS del canvas */
   video[playsinline][autoplay]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* 2) Canvas WebGL SIEMPRE por ENCIMA del vídeo */
+  /* Canvas WebGL SIEMPRE ENCIMA */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  /* HUD debug */
+  /* Debug discreto */
   .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
        padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
@@ -29,8 +29,10 @@
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
+
   <a-camera look-controls="enabled:false"></a-camera>
-  <!-- 8 anclas por si tu target no es el índice 0 -->
+
+  <!-- 8 anchors: el que detecte se hace visible -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
   <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
@@ -47,67 +49,121 @@
   const dbg = document.getElementById('dbg');
   const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   const q = new URLSearchParams(location.search);
-  const t = q.get('t') || 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
-  const pw = +(q.get('pw')||2481), ph = +(q.get('ph')||3508), H = ph/pw;
+
+  // === Parámetros ===
+  const t  = q.get('t')  || '';                   // URL .mind (OBLIGATORIO)
+  const d  = q.get('d')  || '';                   // overlay PNG/JPG (opcional; si falta, plano verde)
+  const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
+  const overlayDebug = q.get('overlayDebug')==='1';
+
+  // Vídeos (hasta 3) v1..v3 con rectángulos px (x,y,w,h) referidos al overlay (origen arriba-izq)
+  const slots=[1,2,3].map(i=>({
+    id:i, v:q.get('v'+i),
+    x:+q.get('x'+i)||0, y:+q.get('y'+i)||0, w:+q.get('vw'+i)||0, h:+q.get('vh'+i)||0
+  })).filter(s=>s.v && s.w>0 && s.h>0);
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
-  // Carga el .mind remoto
-  const scene = document.getElementById('scene');
+  // Aplica el .mind remoto
+  const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  // Contenido de TEST (visible al detectar)
-  function mountTest(anchor, idx){
-    // Plano magenta que CUBRE el target completo
-    const plane = document.createElement('a-plane');
-    plane.setAttribute('width', 1);
-    plane.setAttribute('height', H);
-    plane.setAttribute('position', '0 0 0');
-    plane.setAttribute('material', 'shader:flat; color:#ff00aa; opacity:0.45; transparent:true; side:double;');
-    plane.setAttribute('animation__pulse','property:material.opacity;from:0.25;to:0.75;dir:alternate;loop:true;dur:700;easing:easeInOutSine');
-    anchor.appendChild(plane);
-
-    // Cubo girando
-    const cube = document.createElement('a-box');
-    cube.setAttribute('position', `0 0 0.05`);
-    cube.setAttribute('width', 0.25); cube.setAttribute('height', 0.25); cube.setAttribute('depth', 0.05);
-    cube.setAttribute('material', 'shader:flat; color:#00ffd0; side:double;');
-    cube.setAttribute('animation__rot','property:rotation;to:0 360 0;loop:true;dur:2000;easing:linear');
-    anchor.appendChild(cube);
-
-    // Texto con el índice detectado
-    const txt = document.createElement('a-text');
-    txt.setAttribute('value', `INDEX ${idx}`);
-    txt.setAttribute('color', '#ffffff');
-    txt.setAttribute('align', 'center');
-    txt.setAttribute('width', 1.5);
-    txt.setAttribute('position', `0 ${-H/2 + 0.12} 0.06`);
-    anchor.appendChild(txt);
-
-    anchor.addEventListener('targetFound', ()=> log('TARGET FOUND en índice '+idx,'ok'));
-    anchor.addEventListener('targetLost',  ()=> log('Perdido índice '+idx,'warn'));
+  // Construye overlay (imagen o debug magenta) que cubre TODO el target (ancho=1, alto=H)
+  function buildOverlay(){
+    if (!d || overlayDebug){
+      const p=document.createElement('a-plane');
+      p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
+      p.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.35; transparent:true; side:double;');
+      p.setAttribute('animation__pulse','property:material.opacity;from:0.20;to:0.70;dir:alternate;loop:true;dur:800;easing:easeInOutSine');
+      return p;
+    } else {
+      const assets=document.createElement('a-assets'); assets.id='assets-overlay'; assets.setAttribute('timeout','30000'); scene.appendChild(assets);
+      const img=document.createElement('img'); img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
+      const p=document.createElement('a-plane');
+      p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
+      p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:0; side:double;');
+      p.setAttribute('animation__fade','property:material.opacity;from:0;to:1;dur:400;easing:easeOutQuad;startEvents:show');
+      return p;
+    }
   }
 
-  // Monta test en TODOS los anchors
-  for(let i=0;i<8;i++){ const a=document.getElementById('a'+i); if(a) mountTest(a,i); }
+  // Construye un <video> DOM y su plano con COVER real (offset/repeat)
+  function buildVideoSlot(s){
+    const assets = document.getElementById('assets-videos') || (()=>{
+      const el=document.createElement('a-assets'); el.id='assets-videos'; el.setAttribute('timeout','60000'); scene.appendChild(el); return el;
+    })();
 
-  // Asegurar que el vídeo de cámara queda detrás del canvas (por si el navegador lo inyecta después)
-  const mo = new MutationObserver(()=>{
+    const v=document.createElement('video');
+    v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous';
+    // Sugerencia: vídeo 720p H.264 para compatibilidad
+    v.src=s.v; assets.appendChild(v);
+
+    // px -> unidades normalizadas
+    const wn=s.w/pw, hn=s.h/pw;
+    const cx=-0.5+(s.x+s.w/2)/pw, cy=(ph/pw)/2-(s.y+s.h/2)/pw;
+
+    const plane=document.createElement('a-plane');
+    plane.setAttribute('width',wn); plane.setAttribute('height',hn);
+    plane.setAttribute('position',`${cx} ${cy} 0.02`);
+    plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
+
+    function cover(){
+      const mesh=plane.getObject3D('mesh');
+      if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
+      const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h;
+      let rx=1,ry=1,ox=0,oy=0;
+      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; oy=0; }
+      else     { rx=1;     ry=vr/rr; ox=0;     oy=(1-ry)/2; }
+      tex.offset.set(ox,oy); tex.repeat.set(rx,ry);
+      tex.needsUpdate=true; mesh.material.needsUpdate=true;
+      log(`COVER v${s.id}: vr=${vr.toFixed(3)} rr=${rr.toFixed(3)}`,'ok');
+    }
+    plane.addEventListener('materialtextureloaded',cover);
+    v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
+    v.addEventListener('error',()=>log(`v${s.id}: error de carga`,'err'));
+
+    return {plane, video:v};
+  }
+
+  // Monta overlay + (0..3) vídeos en todos los anchors: el que haga targetFound se verá
+  for(let i=0;i<8;i++){
+    const a=document.getElementById('a'+i); if(!a) continue;
+
+    const overlay = buildOverlay(); a.appendChild(overlay);
+    const vobjs   = slots.map(buildVideoSlot);
+    vobjs.forEach(o=>{ if(o) a.appendChild(o.plane); });
+
+    a.addEventListener('targetFound', ()=>{
+      log('TARGET FOUND en índice '+i,'ok');
+      if(d && !overlayDebug) overlay.emit('show',null,false);
+      vobjs.forEach(o=>o && o.video && o.video.play && o.video.play().catch(()=>{}));
+    });
+    a.addEventListener('targetLost', ()=> log('Perdido índice '+i,'warn'));
+  }
+
+  // Asegurar que el vídeo de cámara queda detrás del canvas (algunos navegadores lo inyectan tarde)
+  const mo=new MutationObserver(()=>{
     document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
       v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
       v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='0'; v.style.background='#000';
     });
-    const canvas = document.querySelector('canvas.a-canvas'); if(canvas){
-      canvas.style.zIndex='3'; canvas.style.position='fixed'; canvas.style.inset='0';
-    }
+    const canvas=document.querySelector('canvas.a-canvas');
+    if(canvas){ canvas.style.zIndex='3'; canvas.style.position='fixed'; canvas.style.inset='0'; }
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
-  scene.addEventListener('arReady', ()=>log('Cámara OK'));
+  scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
+
+  // iOS: un toque para desbloquear autoplay si hiciera falta
+  window.addEventListener('touchend', ()=>{
+    document.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
+  }, {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
+
