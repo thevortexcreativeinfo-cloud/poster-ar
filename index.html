@@ -3,19 +3,26 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Estable</title>
+<title>Poster AR · Overlay + Video + Text + Audio</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  video[playsinline][autoplay]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* Cámara detrás del canvas */
+  video[playsinline][autoplay]{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
+  /* Canvas siempre encima */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
+  /* UI */
+  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
+       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
-  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
+  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;
+         color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
   .sound[hidden]{display:none}
-  #canvases{position:fixed;left:-9999px;top:-9999px;visibility:hidden}
 </style>
 </head>
 <body>
@@ -41,15 +48,14 @@
 
 <button id="btnSound" class="sound" hidden>🔊 Activar sonido</button>
 <div id="dbg" class="dbg">Cargando…</div>
-<div id="canvases"></div>
 
 <script>
 (function(){
   const dbg = document.getElementById('dbg'), btnSound = document.getElementById('btnSound');
   const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
-  window.onerror = (msg, src, line, col, err)=>{ log('JS ERROR: '+msg+' @'+(src||'')+':'+line+':'+col,'err'); };
-
   const q = new URLSearchParams(location.search);
+
+  // === Parámetros ===
   const t  = q.get('t') || '';
   const d  = q.get('d') || '';
   const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
@@ -58,30 +64,38 @@
   const dx = +(q.get('dx')||0), dy=+(q.get('dy')||0), sc=+(q.get('scale')||1), rot=+(q.get('rot')||0);
   const eqVis = q.get('eq')==='1';
 
+  // Vídeos
   const vSlots=[1,2,3].map(i=>({id:i,v:q.get('v'+i),x:+q.get('x'+i)||0,y:+q.get('y'+i)||0,w:+q.get('vw'+i)||0,h:+q.get('vh'+i)||0}))
     .filter(s=>s.v&&s.w>0&&s.h>0);
 
+  // Textos como CANVAS (hasta 5)
   const tSlots=[1,2,3,4,5].map(i=>{
     const val=q.get('t'+i); if(!val) return null;
     return {id:i,text:val,x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,align:(q.get('ta'+i)||'center'),color:'#'+(q.get('tc'+i)||'000000')};
   }).filter(Boolean);
 
+  // Audio + progreso
   const audioSrc=q.get('audio')||'';
   const pbx=+(q.get('pbx')||300), pby=+(q.get('pby')||2640), pbw=+(q.get('pbw')||2060), pbh=+(q.get('pbh')||14);
-  const pbc='#'+(q.get('pbc')||'000000'), pbf='#'+(q.get('pbf')||'13d77a'), pkn='#'+(q.get('pkn')||'000000');
+  const pbc='#'+(q.get('pbc')||'000000');
+  const pbf='#'+(q.get('pbf')||'13d77a');
+  const pkn='#'+(q.get('pkn')||'000000');
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
   const scene=document.getElementById('scene');
-  // ⚠️ Espacio tras imageTargetSrc:
-  scene.setAttribute('mindar-image', `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
+  scene.setAttribute('mindar-image',`imageTargetSrc:${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
+  // ===== ASSETS únicos =====
   const assets = document.createElement('a-assets');
   assets.id='assets'; assets.setAttribute('timeout','60000'); scene.appendChild(assets);
+
   if(d && !overlayDebug){
     const img=document.createElement('img'); img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
   }
+
+  // videos únicos
   const videoEls={};
   vSlots.forEach(s=>{
     const v=document.createElement('video');
@@ -89,9 +103,18 @@
     v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v;
     assets.appendChild(v); videoEls[s.id]=v;
   });
-  let audioEl=null, userApproved=false, targetVisible=false;
-  if(audioSrc){ audioEl=new Audio(audioSrc); audioEl.crossOrigin='anonymous'; audioEl.preload='auto'; audioEl.loop=false; audioEl.volume=1.0; }
 
+  // audio único
+  let audioEl=null, userApproved=false, targetVisible=false;
+  if(audioSrc){
+    audioEl=new Audio(audioSrc);
+    audioEl.crossOrigin='anonymous';
+    audioEl.preload='auto';
+    audioEl.loop=false;
+    audioEl.volume=1.0;
+  }
+
+  // ===== Utilidades =====
   const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
 
   const makeRoot=()=>{
@@ -121,6 +144,7 @@
     plane.setAttribute('position',`${cx} ${cy} 0.03`);
     plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
     plane.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:220; easing:easeOutQuad; startEvents:pop');
+
     function cover(){ const mesh=plane.getObject3D('mesh'); const v=videoEls[s.id];
       if(!mesh||!mesh.material||!mesh.material.map||!v||!v.videoWidth) return;
       const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h; let rx=1,ry=1,ox=0,oy=0;
@@ -139,42 +163,50 @@
     return plane;
   };
 
-  // --- Textos como canvas→textura (fuera de <a-assets>) ---
+  // === Textos como CANVAS → textura en a-plane (siempre visibles) ===
   function drawTextToCanvas(text,color,align,wpx,hpx){
+    // 2x para nitidez
     const scale=2, cw=Math.max(64, Math.min(2048, Math.round(wpx*scale))), ch=Math.max(32, Math.min(1024, Math.round(hpx*scale)));
     const c=document.createElement('canvas'); c.width=cw; c.height=ch;
     const ctx=c.getContext('2d');
     ctx.clearRect(0,0,cw,ch);
-    ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=Math.floor(ch*0.06); ctx.shadowOffsetY=Math.floor(ch*0.03);
+    // fondo transparente; sombra suave
+    ctx.fillStyle='rgba(0,0,0,0)'; ctx.fillRect(0,0,cw,ch);
+    ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur= Math.floor(ch*0.06); ctx.shadowOffsetY= Math.floor(ch*0.03);
     ctx.fillStyle=color;
+    // buscar tamaño de fuente máximo que encaje
     const family='600 64px "Inter", system-ui, -apple-system, Segoe UI, Roboto';
     let size=Math.floor(ch*0.72), min=12, max=Math.floor(ch*0.9);
     const padX=Math.floor(cw*0.04);
     while(min<=max){
-      const mid=(min+max>>1);
+      const mid=Math.floor((min+max)/2);
       ctx.font=family.replace('64px', mid+'px');
       const m=ctx.measureText(text);
-      if(m.width <= (cw-2*padX) && mid <= ch*0.9){ size=mid; min=mid+1; } else { max=mid-1; }
+      const fits = (m.width <= (cw-2*padX)) && (mid <= ch*0.9);
+      if(fits){ size=mid; min=mid+1; } else { max=mid-1; }
     }
     ctx.font=family.replace('64px', size+'px');
     ctx.textBaseline='middle';
     ctx.textAlign = (align==='left'?'left':align==='right'?'right':'center');
-    const x = (align==='left')? padX : (align==='right')? (cw-padX) : (cw/2);
+    let x = (align==='left')? padX : (align==='right')? (cw-padX) : (cw/2);
     const y = ch/2;
     ctx.fillText(text, x, y);
     return c;
   }
+
   function buildTextPlane(s){
     const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
     const canvas = drawTextToCanvas(s.text, s.color, s.align, s.w, s.h);
     canvas.id = 'tc'+s.id;
-    document.getElementById('canvases').appendChild(canvas); // 👈 fuera de a-assets
+    assets.appendChild(canvas);
 
     const p=document.createElement('a-plane');
     p.setAttribute('width',wn); p.setAttribute('height',hn);
-    p.setAttribute('position', `${cx} ${cy} 0.12`); // por encima de todo
-    p.setAttribute('material', `shader:flat; src:#${canvas.id}; transparent:true; side:double; depthTest:false; opacity:0`);
+    p.setAttribute('position', `${cx} ${cy} 0.12`); // SIEMPRE por encima
+    p.setAttribute('material', `shader:flat; src:#${canvas.id}; transparent:true; side:double; opacity:0`);
     p.setAttribute('animation__in','property:material.opacity; from:0; to:1; dur:280; easing:easeOutQuad; startEvents:show');
+    // pequeño slide-up
+    p.setAttribute('animation__slide','property:position; dir:alternate; dur:900; easing:easeInOutSine; loop:true; to:${cx} ${cy+0.003} 0.12');
     if(debugRects){
       const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn);
       wire.setAttribute('position',`0 0 -0.001`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.8; side:double;');
@@ -183,6 +215,7 @@
     return p;
   }
 
+  // Barra progreso
   function buildProgress(x,y,w,h,pbc,pbf,pkn){
     const {wn,hn,cx,cy}=pxToUnits(x,y,w,h);
     const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.09`);
@@ -199,29 +232,84 @@
     return {group:g, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); smooth = smooth*0.85 + c*0.15; const wnow=wn*smooth; fill.setAttribute('width', wnow); fill.setAttribute('position',`${wnow/2} 0 0.001`); knob.setAttribute('position',`${wnow} 0 0.002`);} };
   }
 
-  // ===== Build en primer anchor detectado =====
-  let built=false, progress=null;
+  // Ecualizador opcional (8 barras)
+  function buildEQ(x,y,w,h,color){
+    const {wn,hn,cx,cy}=pxToUnits(x,y,w,h);
+    const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.095`);
+    const bars=[]; const n=8; const gap=wn*0.02; const bw=(wn - gap*(n-1))/n;
+    for(let i=0;i<n;i++){
+      const p=document.createElement('a-plane');
+      p.setAttribute('width',bw); p.setAttribute('height',hn*0.1);
+      p.setAttribute('position',`${i*(bw+gap)+bw/2} 0 0`);
+      p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.9; side:double`);
+      bars.push(p); g.appendChild(p);
+    }
+    return {group:g, set:(arr)=>{ // arr [0..1]
+      for(let i=0;i<bars.length;i++){
+        const v = Math.max(0.05, Math.min(1, arr[i]||0));
+        const hnow = hn*(0.1 + 0.9*v);
+        bars[i].setAttribute('height', hnow);
+        bars[i].setAttribute('position', `${i*( (wn - (bw*bars.length)) / (bars.length-1) + bw) + bw/2} ${hnow/2 - hn*0.05} 0`);
+      }
+    }};
+  }
+
+  // ===== Construcción: sólo en el primer anchor que detecte =====
+  let built=false, progress=null, eq=null, audioCtx=null, analyser=null, freqData=null;
   const anchors=[...Array(8)].map((_,i)=>document.getElementById('a'+i)).filter(Boolean);
 
   function buildInto(anchor){
     if(built) return; built=true;
-    const root=makeRoot(); anchor.appendChild(root); root.emit('pop',null,false);
 
-    const overlay=buildOverlay(); root.appendChild(overlay); if(d && !overlayDebug) overlay.emit('show',null,false);
+    const root=document.createElement('a-entity');
+    root.setAttribute('position', `${dx/pw} ${-dy/pw} 0`);
+    root.setAttribute('scale', `${sc} ${sc} 1`);
+    if(rot) root.setAttribute('rotation',`0 0 ${rot}`);
+    anchor.appendChild(root);
+    root.emit('pop',null,false);
+
+    const overlay=buildOverlay(); root.appendChild(overlay);
+    if(d && !overlayDebug) overlay.emit('show',null,false);
+
     vSlots.forEach(s=>{ const plane=buildVideoPlane(s); root.appendChild(plane); plane.emit('pop',null,false); });
-    tSlots.forEach(s=>{ const tp=buildTextPlane(s); root.appendChild(tp); tp.emit('in',null,false); tp.emit('show',null,false); });
+
+    tSlots.forEach(s=>{ const tp=buildTextPlane(s); root.appendChild(tp); tp.emit('show',null,false); });
 
     if(audioEl){
       progress = buildProgress(pbx,pby,pbw,pbh,pbc,pbf,pkn); root.appendChild(progress.group);
+      if(eqVis){
+        eq = buildEQ(pbx, pby + pbh*5, pbw, pbh*10, pbf); // encima de la barra
+        root.appendChild(eq.group);
+      }
     }
   }
 
+  function setupEQ(){
+    if(!audioEl || audioCtx) return;
+    try{
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      const src = audioCtx.createMediaElementSource(audioEl);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser); analyser.connect(audioCtx.destination);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+    }catch(e){ log('EQ no disponible', 'warn'); }
+  }
+
+  // Audio: sólo cuando hay target + permiso
+  let targetVisible=false;
   function tryStartAudio(){
     if(!audioEl) return;
-    if(targetVisible && userApproved){ audioEl.play().catch(()=>{}); btnSound.hidden=true; }
-    else { audioEl.pause(); if(targetVisible && !userApproved) btnSound.hidden=false; }
+    if(targetVisible && userApproved){
+      audioEl.play().catch(()=>{});
+      btnSound.hidden=true;
+      if(audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    }else{
+      audioEl.pause();
+      if(targetVisible && !userApproved) btnSound.hidden=false;
+    }
   }
-  btnSound.onclick=()=>{ userApproved=true; tryStartAudio(); };
+  btnSound.onclick=()=>{ userApproved=true; setupEQ(); tryStartAudio(); };
 
   anchors.forEach((a,i)=>{
     a.addEventListener('targetFound', ()=>{
@@ -250,15 +338,30 @@
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
-  // progreso de audio
-  function tick(){ if(audioEl && progress && audioEl.duration>0){ progress.set(audioEl.currentTime / audioEl.duration); } requestAnimationFrame(tick); }
+  // Loop de progreso + (opcional) ecualizador
+  function tick(){
+    if(audioEl && progress && audioEl.duration>0){
+      progress.set(audioEl.currentTime / audioEl.duration);
+    }
+    if(analyser && eq){
+      analyser.getByteFrequencyData(freqData);
+      const bands=8, step=Math.floor(freqData.length/bands);
+      const arr=new Array(bands).fill(0).map((_,i)=>{
+        let s=0; for(let j=0;j<step;j++) s+=freqData[i*step+j]; s/=step; return s/255;
+      });
+      eq.set(arr);
+    }
+    requestAnimationFrame(tick);
+  }
   requestAnimationFrame(tick);
 
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
-  scene.addEventListener('arError', e=>log('Error cámara/permisos '+(e?.detail||''),'err'));
+  scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 
   // Primer toque: habilitar vídeos si el navegador lo exige
-  window.addEventListener('touchend', ()=>{ Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{})); }, {once:true,passive:true});
+  window.addEventListener('touchend', ()=>{
+    Object.values(videoEls).forEach(v=>v && v.play && v.play().catch(()=>{}));
+  }, {once:true,passive:true});
 })();
 </script>
 </body>
