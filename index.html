@@ -3,17 +3,25 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Overlay + Vídeo + Texto + Audio</title>
+<title>Poster AR · Overlay + Vídeo + Texto + Audio + Progreso</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  video[playsinline][autoplay]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* Cámara en cover, DETRÁS del canvas */
+  video[playsinline][autoplay]{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
+  /* Canvas WebGL SIEMPRE ENCIMA */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;font:12px/1.4 system-ui;color:#cfe3ff;pointer-events:none;max-width:80vw}
+  /* UI */
+  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
+       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
-  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
+  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;
+         color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
   .sound[hidden]{display:none}
 </style>
 </head>
@@ -24,7 +32,9 @@
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
+
   <a-camera look-controls="enabled:false"></a-camera>
+
   <!-- 8 anchors -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
@@ -45,7 +55,7 @@
   const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   const q = new URLSearchParams(location.search);
 
-  // --- Parámetros ---
+  // === Parámetros ===
   const t  = q.get('t') || '';
   const d  = q.get('d') || '';
   const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
@@ -53,16 +63,24 @@
   const debugRects = q.get('debugRects')==='1';
   const dx = +(q.get('dx')||0), dy=+(q.get('dy')||0), sc=+(q.get('scale')||1), rot=+(q.get('rot')||0);
 
+  // Vídeos
   const vSlots=[1,2,3].map(i=>({id:i,v:q.get('v'+i),x:+q.get('x'+i)||0,y:+q.get('y'+i)||0,w:+q.get('vw'+i)||0,h:+q.get('vh'+i)||0}))
     .filter(s=>s.v&&s.w>0&&s.h>0);
 
-  const tSlots=[1,2,3].map(i=>{
+  // Textos
+  const tSlots=[1,2,3,4,5].map(i=>{
     const val=q.get('t'+i); if(!val) return null;
-    return {id:i,text:val,x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,align:(q.get('ta'+i)||'center'),color:'#'+(q.get('tc'+i)||'ffffff')};
+    return {id:i,text:decodeURIComponent(val),x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,align:(q.get('ta'+i)||'center'),color:'#'+(q.get('tc'+i)||'000000')};
   }).filter(Boolean);
 
+  // Audio + progreso
   const audioSrc=q.get('audio')||'';
-  let audioEl=null, audioWanted=false;
+  const pbx=+(q.get('pbx')||300), pby=+(q.get('pby')||2640), pbw=+(q.get('pbw')||2060), pbh=+(q.get('pbh')||14);
+  const pbc='#'+(q.get('pbc')||'000000');   // color barra bg
+  const pbf='#'+(q.get('pbf')||'00ff90');   // color barra fill
+  const pkn='#'+(q.get('pkn')||'000000');   // color knob
+
+  let audioEl=null, audioWanted=false, progress=null;
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
@@ -70,19 +88,19 @@
   scene.setAttribute('mindar-image',`imageTargetSrc:${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  // px → unidades (ancho 1, alto H)
+  // Utilidades
   const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
 
-  // grupo raíz con ajustes finos
   const makeRoot=()=>{
     const root=document.createElement('a-entity');
     root.setAttribute('position', `${dx/pw} ${-dy/pw} 0`);
     root.setAttribute('scale', `${sc} ${sc} 1`);
     if(rot) root.setAttribute('rotation',`0 0 ${rot}`);
+    root.setAttribute('animation__pop','property:scale; from:'+(0.97*sc)+' '+(0.97*sc)+' 1; to:'+sc+' '+sc+' 1; dur:280; easing:easeOutQuad; startEvents:pop');
     return root;
   };
 
-  // overlay
+  // Overlay
   const buildOverlay=()=>{
     const p=document.createElement('a-plane'); p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
     if(!d||overlayDebug){
@@ -95,13 +113,15 @@
     return p;
   };
 
-  // vídeo COVER
+  // Vídeo COVER
   function buildVideoSlot(s){
     const assets=document.getElementById('assets-videos')||(()=>{const el=document.createElement('a-assets'); el.id='assets-videos'; el.setAttribute('timeout','60000'); scene.appendChild(el); return el;})();
     const v=document.createElement('video'); v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
     v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v; assets.appendChild(v);
     const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
-    const plane=document.createElement('a-plane'); plane.setAttribute('width',wn); plane.setAttribute('height',hn); plane.setAttribute('position',`${cx} ${cy} 0.02`); plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
+    const plane=document.createElement('a-plane'); plane.setAttribute('width',wn); plane.setAttribute('height',hn);
+    plane.setAttribute('position',`${cx} ${cy} 0.05`);
+    plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
     function cover(){ const mesh=plane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
       const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h; let rx=1,ry=1,ox=0,oy=0;
       if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
@@ -109,52 +129,66 @@
     plane.addEventListener('materialtextureloaded',cover);
     v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
     const group=document.createElement('a-entity'); group.appendChild(plane);
-    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.021`); wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
+    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.051`); wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
     return {group,video:v};
   }
 
-  // texto (a-text) — ahora sí visible siempre
+  // Texto SDF (forzado arriba del overlay)
   function buildTextSlot(s){
     const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
-    const txt=document.createElement('a-text');
-    txt.setAttribute('value', s.text);
-    txt.setAttribute('align', s.align);
-    txt.setAttribute('color', s.color);
-    txt.setAttribute('width', wn);            // ancho en unidades normalizadas
-    txt.setAttribute('anchor','center');      // centra el pivot
-    txt.setAttribute('baseline','center');
-    txt.setAttribute('position', `${cx} ${cy} 0.03`);
-    // wireframe debug
-    const group=document.createElement('a-entity');
-    group.appendChild(txt);
-    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.029`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
-    return group;
+    const e=document.createElement('a-entity');
+    e.setAttribute('text', `value:${s.text}; align:${s.align}; color:${s.color}; width:${wn}; wrapCount:36; baseline:center;`);
+    e.setAttribute('position', `${cx} ${cy} 0.12`);
+    // truco: que no escriba en el depth buffer → siempre visible
+    e.setAttribute('material','depthTest:false; transparent:true; opacity:1; side:double');
+    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`0 0 -0.001`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.9; side:double;'); e.appendChild(wire); }
+    return e;
   }
 
-  // AUDIO opcional
+  // Barra de progreso + knob (sincronizada con audio)
+  function buildProgress(x,y,w,h){
+    const {wn,hn,cx,cy}=pxToUnits(x,y,w,h);
+    const g=document.createElement('a-entity'); g.setAttribute('position',`${cx-wn/2} ${cy} 0.09`); // origen a la IZQUIERDA
+    const bg=document.createElement('a-plane'); bg.setAttribute('width',wn); bg.setAttribute('height',hn);
+    bg.setAttribute('material',`shader:flat; color:${pbc}; transparent:true; opacity:0.9; side:double`);
+    bg.setAttribute('position',`${wn/2} 0 0`);
+    const fill=document.createElement('a-plane'); fill.setAttribute('width',0.0001); fill.setAttribute('height',hn);
+    fill.setAttribute('material',`shader:flat; color:${pbf}; transparent:true; opacity:1; side:double`);
+    fill.setAttribute('position',`0 0 0.001`);
+    const knob=document.createElement('a-circle'); knob.setAttribute('radius',hn*0.9/2);
+    knob.setAttribute('material',`shader:flat; color:${pkn}; side:double`); knob.setAttribute('position',`0 0 0.002`);
+    g.appendChild(bg); g.appendChild(fill); g.appendChild(knob);
+    return {group:g, setProgress:(p)=>{ const clamped=Math.max(0,Math.min(1,p||0)); const wnow=wn*clamped; fill.setAttribute('width', wnow); fill.setAttribute('position',`${wnow/2} 0 0.001`); knob.setAttribute('position',`${wnow} 0 0.002`);} };
+  }
+
+  // Audio
   if(audioSrc){
-    audioEl=new Audio(audioSrc);
-    audioEl.crossOrigin='anonymous';
-    audioEl.preload='auto';
-    audioEl.loop=false; // cambia si quieres loop
-    audioEl.volume=1.0;
-    audioWanted=true;
-    btnSound.hidden=false;
+    audioEl=new Audio(audioSrc); audioEl.crossOrigin='anonymous'; audioEl.preload='auto'; audioEl.loop=false; audioEl.volume=1.0;
+    audioWanted=true; btnSound.hidden=false;
   }
   btnSound.onclick=()=>{ if(audioEl){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); } };
 
-  // monta en todos los anchors
+  // Montaje por anchor
   for(let i=0;i<8;i++){
     const a=document.getElementById('a'+i); if(!a) continue;
     const root=makeRoot(); a.appendChild(root);
     const overlay=buildOverlay(); root.appendChild(overlay);
+
+    // Vídeos
     const vobjs=vSlots.map(buildVideoSlot); vobjs.forEach(o=>o&&root.appendChild(o.group));
+
+    // Textos
     const tobjs=tSlots.map(buildTextSlot);  tobjs.forEach(o=>o&&root.appendChild(o));
 
+    // Progreso (si hay audio)
+    if(audioSrc){
+      progress = buildProgress(pbx,pby,pbw,pbh); root.appendChild(progress.group);
+    }
+
     a.addEventListener('targetFound', ()=>{
-      log('TARGET FOUND idx '+i,'ok');
+      log('TARGET FOUND idx '+i,'ok'); root.emit('pop',null,false);
       vobjs.forEach(o=>o && o.video && o.video.play && o.video.play().catch(()=>{}));
-      if(audioEl && audioWanted){ btnSound.hidden=false; } // mostramos botón
+      if(audioEl && audioWanted){ btnSound.hidden=false; }
     });
     a.addEventListener('targetLost', ()=>{
       vobjs.forEach(o=>o && o.video && o.video.pause && o.video.pause());
@@ -163,7 +197,7 @@
     });
   }
 
-  // z-index cámara OK
+  // Z-index cámara OK
   const mo=new MutationObserver(()=>{
     document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
       v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
@@ -173,10 +207,19 @@
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
+  // Sincroniza progreso con audio
+  function tick(){
+    if(audioEl && progress && audioEl.duration>0){
+      progress.setProgress(audioEl.currentTime / audioEl.duration);
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 
-  // primer toque: intento de play por si el navegador exige gesto
+  // Primer toque: intentar reproducir (algunos navegadores exigen gesto)
   window.addEventListener('touchend', ()=>{
     document.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
     if(audioEl && audioWanted){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); }
