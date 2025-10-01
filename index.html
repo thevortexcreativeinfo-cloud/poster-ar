@@ -1,45 +1,33 @@
-<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Overlay + Vídeo</title>
+<!doctype html><html lang="es"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Poster AR · Overlay + Vídeo (auto-index)</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
   video[playsinline][autoplay]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000}
-  .ui{position:fixed;inset:0;pointer-events:none;display:grid;align-items:start}
-  header{pointer-events:auto;background:linear-gradient(180deg,rgba(0,0,0,.85),transparent);
-         padding:12px 14px;color:#eaf2ff;font:15px/1.45 system-ui,Segoe UI,Roboto}
-  button{padding:10px 14px;border-radius:12px;border:1px solid #2a3a58;background:#132132;color:#e9f1ff;cursor:pointer}
   .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;font:12px/1.4 system-ui;color:#9fb1d6;pointer-events:none;max-width:70ch}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
 </style>
-</head>
-<body>
-<main class="ui">
-  <header>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button id="btnStart">Abrir cámara</button>
-      <button id="btnSound" hidden>🔊 Activar sonido</button>
-      <span id="msg" style="opacity:.9"></span>
-    </div>
-  </header>
-</main>
-
+</head><body>
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;physicallyCorrectLights:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
-
-  <!-- NO metemos vídeos vacíos aquí. Solo el overlay cuando exista -->
   <a-assets id="assets" timeout="1000"></a-assets>
-
   <a-camera look-controls="enabled:false"></a-camera>
-  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
+
+  <!-- 8 anclas por si el target no es el índice 0 -->
+  <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
+  <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
+  <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
+  <a-entity id="a3" mindar-image-target="targetIndex:3"></a-entity>
+  <a-entity id="a4" mindar-image-target="targetIndex:4"></a-entity>
+  <a-entity id="a5" mindar-image-target="targetIndex:5"></a-entity>
+  <a-entity id="a6" mindar-image-target="targetIndex:6"></a-entity>
+  <a-entity id="a7" mindar-image-target="targetIndex:7"></a-entity>
 </a-scene>
 
 <div class="dbg" id="dbg">Cargando…</div>
@@ -47,133 +35,88 @@
 <script>
 (function(){
   const dbg = document.getElementById('dbg');
-  const log = (m,cls='')=>{
-    dbg.innerHTML = (cls?`<span class="${cls}">${m}</span>`:m)+"<br>"+dbg.innerHTML;
-    console.log('[AR]', m);
-  };
+  const log = (m,cls='')=>{dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML;console.log('[AR]',m);};
   const q = new URLSearchParams(location.search);
 
   // Parámetros
-  const t   = q.get('t')  || '';
-  const d   = q.get('d')  || '';
-  const pw  = +(q.get('pw')||596);
-  const ph  = +(q.get('ph')||842);
-  const H   = ph/pw;
-  const ti  = +(q.get('ti')||0);
+  const t   = q.get('t') || '';
+  const d   = q.get('d') || '';
+  const pw  = +(q.get('pw')||596), ph=+(q.get('ph')||842), H=ph/pw;
   const overlayDebug = q.get('overlayDebug')==='1';
-  const parallax = q.get('parallax')==='on';
 
-  const slots=[1,2,3].map(i=>({
-    v:q.get('v'+i), x:+q.get('x'+i)||0, y:+q.get('y'+i)||0, w:+q.get('vw'+i)||0, h:+q.get('vh'+i)||0, id:i
-  })).filter(s=>s.v && s.w>0 && s.h>0);
+  // Vídeo (1 slot para la prueba)
+  const s = { v:q.get('v1'), x:+q.get('x1')||0, y:+q.get('y1')||0, w:+q.get('vw1')||0, h:+q.get('vh1')||0 };
 
-  const scene  = document.getElementById('scene');
-  const anchor = document.getElementById('anchor');
-  const assets = document.getElementById('assets');
+  // Aplica .mind remoto
+  const scene=document.getElementById('scene');
+  if(t){ scene.setAttribute('mindar-image', `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`); log('Cargado .mind desde URL','ok'); }
+  else { log('❗ Falta ?t=<URL .mind>','err'); }
 
-  // Selección de targetIndex
-  anchor.setAttribute('mindar-image-target', `targetIndex:${isNaN(ti)?0:ti}`);
+  const assets=document.getElementById('assets');
 
-  // Aplicar .mind desde URL
-  if(t){
-    scene.setAttribute('mindar-image',
-      `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
-    log('Cargado .mind desde URL','ok');
-  } else {
-    log('❗ Falta ?t=<URL .mind>','err');
-    document.getElementById('msg').textContent='Añade ?t=<URL .mind> a la dirección';
+  // Crea overlay material (imagen o debug)
+  function makeOverlay(){
+    if (overlayDebug || !d){
+      const p=document.createElement('a-plane');
+      p.setAttribute('width',1); p.setAttribute('height',H);
+      p.setAttribute('position','0 0 0');
+      p.setAttribute('material','shader:flat; color:#00ffaa; opacity:0.35; transparent:true; side:double;');
+      return p;
+    }else{
+      const img=document.createElement('img');
+      img.id='designImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
+      const p=document.createElement('a-plane');
+      p.setAttribute('width',1); p.setAttribute('height',H);
+      p.setAttribute('position','0 0 0');
+      p.setAttribute('material','shader:flat; src:#designImg; transparent:true; opacity:1; side:double;');
+      return p;
+    }
   }
 
-  // OVERLAY
-  let overlay;
-  if (overlayDebug || !d){
-    overlay=document.createElement('a-plane');
-    overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-    overlay.setAttribute('position','0 0 0');
-    overlay.setAttribute('material','shader:flat; color:#00ffaa; opacity:0.35; transparent:true; side:double;');
-    anchor.appendChild(overlay);
-    log('Overlay DEBUG (verde)','warn');
-  } else {
-    const img=document.createElement('img');
-    img.id='designImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
-    overlay=document.createElement('a-plane');
-    overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-    overlay.setAttribute('position','0 0 0');
-    overlay.setAttribute('material','shader:flat; src:#designImg; transparent:true; opacity:0; side:double;');
-    anchor.appendChild(overlay);
-    log('Overlay listo','ok');
-  }
-  if(parallax){
-    const p = document.createElement('a-entity');
-    p.setAttribute('position','0 0 0'); p.setAttribute('look-at','[camera]');
-    p.appendChild(overlay);
-  }
-
-  // VÍDEOS: crear SOLO los que tengas en la URL
-  function addVideoSlot(s){
-    // crear <video> dinámicamente (evita bloqueo del loader)
+  // Crea vídeo plane si hay parámetros
+  function makeVideo(){
+    if(!s.v || !s.w || !s.h) return null;
     const v=document.createElement('video');
-    v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v;
-    assets.appendChild(v);
+    v.id='v1'; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v; assets.appendChild(v);
 
     const wn=s.w/pw, hn=s.h/pw;
-    const cx=-0.5+(s.x+s.w/2)/pw;
-    const cy=(ph/pw)/2-(s.y+s.h/2)/pw;
+    const cx=-0.5+(s.x+s.w/2)/pw, cy=(ph/pw)/2-(s.y+s.h/2)/pw;
 
     const plane=document.createElement('a-plane');
     plane.setAttribute('width',wn); plane.setAttribute('height',hn);
-    plane.setAttribute('position',`${cx} ${cy} 0.001`);
-    plane.setAttribute('material',`shader:flat; src:#v${s.id}; transparent:false; side:double;`);
-    anchor.appendChild(plane);
+    plane.setAttribute('position',`${cx} ${cy} 0.01`);
+    plane.setAttribute('material','shader:flat; src:#v1; transparent:false; side:double;');
 
     function cover(){
-      const mesh=plane.getObject3D('mesh');
-      if(!mesh || !mesh.material || !mesh.material.map || !v.videoWidth) return;
-      const tex=mesh.material.map;
-      const vr=v.videoWidth/v.videoHeight, rr=s.w/s.h;
-      let rx=1, ry=1, ox=0, oy=0;
+      const mesh=plane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
+      const tex=mesh.material.map; const vr=v.videoWidth/v.videoHeight; const rr=s.w/s.h;
+      let rx=1,ry=1,ox=0,oy=0;
       if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-      tex.offset.set(ox,oy); tex.repeat.set(rx,ry);
-      tex.needsUpdate=true; mesh.material.needsUpdate=true;
-      log(`COVER v${s.id}: vr=${vr.toFixed(3)} rr=${rr.toFixed(3)}`,'ok');
+      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+      log(`COVER vr=${vr.toFixed(3)} rr=${rr.toFixed(3)}`,'ok');
     }
     plane.addEventListener('materialtextureloaded',cover);
     v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
-    v.addEventListener('error',()=>log(`v${s.id}: error de carga`,'err'));
+    return {plane, video:v};
   }
-  slots.forEach(addVideoSlot);
 
-  // UI
-  const btnStart=document.getElementById('btnStart');
-  const btnSound=document.getElementById('btnSound');
-  btnStart.onclick=async()=>{ try{ await scene.components['mindar-image-system']?.start?.(); log('Cámara iniciada','ok'); }catch(e){ log('No se pudo iniciar cámara','err'); }
-    assets.querySelectorAll('video').forEach(el=>el.play().catch(()=>{})); };
-  btnSound.onclick=()=>{ assets.querySelectorAll('video').forEach(el=>{el.muted=false; el.play().catch(()=>{});}); };
+  // Monta overlay+video en cada anchor (0..7); el que detecte, se verá
+  for(let i=0;i<8;i++){
+    const a=document.getElementById('a'+i); if(!a) continue;
+    const overlay = makeOverlay(); a.appendChild(overlay);
+    const vobj = makeVideo(); if(vobj){ a.appendChild(vobj.plane); }
 
-  anchor.addEventListener('targetFound',()=>{
-    if(!overlayDebug && d) overlay.setAttribute('animation__fade','property:material.opacity;from:0;to:1;dur:400;easing:easeOutQuad');
-    btnSound.hidden=false;
-    assets.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
-    log('Target detectado','ok');
-  });
-  anchor.addEventListener('targetLost',()=>log('Perdido…','warn'));
-
-  // Autostart “best effort” + touch kick (iOS)
-  setTimeout(()=>{ scene.components['mindar-image-system']?.start?.().catch(()=>{}); },0);
-  window.addEventListener('touchend',()=>{ assets.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));}, {once:true,passive:true});
-
-  // Forzar cover del stream de cámara del DOM
-  const mo=new MutationObserver(()=>{
-    document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
-      v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
-      v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='0'; v.style.background='#000';
+    a.addEventListener('targetFound', ()=>{
+      if(vobj) vobj.video.play().catch(()=>{});
+      log('TARGET FOUND en índice '+i,'ok');
     });
-  });
-  mo.observe(document.documentElement,{subtree:true,childList:true});
+    a.addEventListener('targetLost', ()=> log('Perdido índice '+i,'warn'));
+  }
 
-  log(`Imagen base: ${pw}×${ph} (H=${H.toFixed(4)})`);
+  scene.addEventListener('arReady',()=>log('Cámara OK'));
+  scene.addEventListener('arError',()=>log('Error de cámara / permisos','err'));
 })();
 </script>
-</body>
-</html>
+</body></html>
+
