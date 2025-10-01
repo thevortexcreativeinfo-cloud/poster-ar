@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Overlay + Vídeo</title>
+<title>AR · Test visible</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara DOM en cover detrás del canvas */
+  /* Cámara DOM en cover, detrás del canvas */
   video[playsinline][autoplay]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000
@@ -19,7 +19,6 @@
 </style>
 </head>
 <body>
-
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;physicallyCorrectLights:true;logarithmicDepthBuffer:true"
@@ -27,10 +26,9 @@
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
 
-  <a-assets id="assets" timeout="60000"></a-assets>
   <a-camera look-controls="enabled:false"></a-camera>
 
-  <!-- 8 anchors: cogerá el que coincida con tu targetIndex -->
+  <!-- 8 anchors por si tu targetIndex no es 0 -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
   <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
@@ -47,103 +45,61 @@
 (function(){
   const dbg = document.getElementById('dbg');
   const log = (m,cls='')=>{
-    dbg.innerHTML = (cls?`<span class="${cls}">${m}</span>`:m)+"<br>"+dbg.innerHTML;
-    console.log('[AR]', m);
+    dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m);
   };
   const q = new URLSearchParams(location.search);
 
-  // --- Parámetros (con tus defaults por si abres sin query) ---
-  const t  = q.get('t') ||
-    'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
-  const d  = q.get('d') ||
-    'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png';
+  const t  = q.get('t') || '';                     // URL del .mind (obligatorio)
   const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
-  const overlayDebug = q.get('overlayDebug')==='1';
 
-  // Slot 1 (puedes añadir v2/v3 igual que este)
-  const s = {
-    v: q.get('v1') || 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
-    x: +(q.get('x1')||296), y: +(q.get('y1')||316),
-    w: +(q.get('vw1')||1890), h: +(q.get('vh1')||1682)
-  };
+  if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
-  // Aplica el .mind remoto
+  // Cargar .mind remoto
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  const assets=document.getElementById('assets');
+  // Crea contenido de TEST (siempre visible al detectar)
+  function mountTest(anchorEl, idx){
+    // Plano magenta que cubre TODO el target (ancho=1, alto=H), con pulso
+    const overlay=document.createElement('a-plane');
+    overlay.setAttribute('width',1);
+    overlay.setAttribute('height',H);
+    overlay.setAttribute('position','0 0 0');
+    overlay.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.35; transparent:true; side:double;');
+    overlay.setAttribute('animation__pulse','property:material.opacity; from:0.15; to:0.65; dir:alternate; loop:true; dur:700; easing:easeInOutSine');
+    anchorEl.appendChild(overlay);
 
-  // Prepara overlay material (imagen o debug)
-  function buildOverlay(){
-    if (overlayDebug || !d){
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',1); p.setAttribute('height',H);
-      p.setAttribute('material','shader:flat; color:#00ffaa; opacity:0.35; transparent:true; side:double;');
-      p.setAttribute('position','0 0 0');
-      return p;
-    } else {
-      const img=document.createElement('img');
-      img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',1); p.setAttribute('height',H);
-      p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:1; side:double;');
-      p.setAttribute('position','0 0 0');
-      return p;
-    }
+    // Cubo girando (bien visible)
+    const cube=document.createElement('a-box');
+    cube.setAttribute('position',`0 0 ${0.05}`);
+    cube.setAttribute('depth',0.05); cube.setAttribute('height',0.2); cube.setAttribute('width',0.2);
+    cube.setAttribute('color','#00ffd0');
+    cube.setAttribute('animation__rot','property: rotation; to: 0 360 0; loop: true; dur: 2000; easing: linear');
+    anchorEl.appendChild(cube);
+
+    // Texto con el índice detectado
+    const txt=document.createElement('a-text');
+    txt.setAttribute('value',`INDEX ${idx}`);
+    txt.setAttribute('color','#ffffff');
+    txt.setAttribute('align','center');
+    txt.setAttribute('width',1.5);
+    txt.setAttribute('position',`0 ${-H/2+0.12} 0.06`);
+    anchorEl.appendChild(txt);
+
+    // Eventos
+    anchorEl.addEventListener('targetFound', ()=> log('TARGET FOUND en índice '+idx,'ok'));
+    anchorEl.addEventListener('targetLost',  ()=> log('Perdido índice '+idx,'warn'));
   }
 
-  // Prepara vídeo plane (COVER real)
-  function buildVideo(){
-    if(!s.v || !s.w || !s.h) return null;
-
-    // Video DOM (dinámico para no bloquear loader)
-    const v=document.createElement('video');
-    v.id='v1'; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v;
-    assets.appendChild(v);
-
-    // Px -> unidades normalizadas
-    const wn=s.w/pw, hn=s.h/pw;
-    const cx=-0.5+(s.x+s.w/2)/pw, cy=(ph/pw)/2-(s.y+s.h/2)/pw;
-
-    const plane=document.createElement('a-plane');
-    plane.setAttribute('width',wn); plane.setAttribute('height',hn);
-    plane.setAttribute('position',`${cx} ${cy} 0.02`);
-    plane.setAttribute('material','shader:flat; src:#v1; side:double;');
-
-    function cover(){
-      const mesh=plane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
-      const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h;
-      let rx=1,ry=1,ox=0,oy=0;
-      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; oy=0; }
-      else     { rx=1;     ry=vr/rr; ox=0;     oy=(1-ry)/2; }
-      tex.offset.set(ox,oy); tex.repeat.set(rx,ry);
-      tex.needsUpdate=true; mesh.material.needsUpdate=true;
-      log(`COVER listo (vr=${vr.toFixed(3)} rr=${rr.toFixed(3)})`,'ok');
-    }
-    plane.addEventListener('materialtextureloaded',cover);
-    v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
-
-    return {plane, video:v};
-  }
-
-  // Monta lo mismo en todos los anchors (0..7). El que detecte será visible.
+  // Montamos test en TODOS los anchors
   for(let i=0;i<8;i++){
-    const a=document.getElementById('a'+i); if(!a) continue;
-
-    const overlay = buildOverlay(); a.appendChild(overlay);
-    const vobj    = buildVideo();   if(vobj){ a.appendChild(vobj.plane); }
-
-    a.addEventListener('targetFound', ()=>{
-      if(vobj) vobj.video.play().catch(()=>{});
-      log('TARGET FOUND en índice '+i,'ok');
-    });
-    a.addEventListener('targetLost', ()=> log('Perdido índice '+i,'warn'));
+    const a=document.getElementById('a'+i);
+    if(a) mountTest(a,i);
   }
 
-  // Forzar cover del stream de cámara
+  // Forzar cover del stream de cámara del DOM (por si el navegador no lo hace)
   const mo=new MutationObserver(()=>{
     document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
       v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
@@ -153,15 +109,9 @@
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
   scene.addEventListener('arReady',()=>log('Cámara OK'));
-  scene.addEventListener('arError', e=>log('Error de cámara / permisos','err'));
-
-  // iOS: un toque para desbloquear autoplay si hiciera falta
-  window.addEventListener('touchend', ()=>{
-    assets.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
-  }, {once:true,passive:true});
+  scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 })();
 </script>
 </body>
 </html>
-
 
