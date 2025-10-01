@@ -3,23 +3,18 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Overlay + Vídeo (estable)</title>
+<title>Poster AR · Overlay + Vídeo + Texto + Audio</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara en cover, DETRÁS del canvas */
-  video[playsinline][autoplay]{
-    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important
-  }
-  /* Canvas WebGL SIEMPRE ENCIMA */
+  video[playsinline][autoplay]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  /* Debug discreto */
-  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;font:12px/1.4 system-ui,Segoe UI,Roboto;color:#cfe3ff;pointer-events:none;max-width:80vw}
+  .dbg{position:fixed;right:8px;bottom:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;font:12px/1.4 system-ui;color:#cfe3ff;pointer-events:none;max-width:80vw}
   .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
+  .sound{position:fixed;left:12px;bottom:12px;z-index:5;background:#111a;border:1px solid #2a3a58;color:#eaf2ff;padding:10px 12px;border-radius:12px;font:14px/1.2 system-ui}
+  .sound[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -29,10 +24,8 @@
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;"
   style="width:100vw;height:100vh">
-
   <a-camera look-controls="enabled:false"></a-camera>
-
-  <!-- 8 anchors: el que detecte se hace visible -->
+  <!-- 8 anchors -->
   <a-entity id="a0" mindar-image-target="targetIndex:0"></a-entity>
   <a-entity id="a1" mindar-image-target="targetIndex:1"></a-entity>
   <a-entity id="a2" mindar-image-target="targetIndex:2"></a-entity>
@@ -42,128 +35,153 @@
   <a-entity id="a6" mindar-image-target="targetIndex:6"></a-entity>
   <a-entity id="a7" mindar-image-target="targetIndex:7"></a-entity>
 </a-scene>
+
+<button id="btnSound" class="sound" hidden>🔊 Activar sonido</button>
 <div id="dbg" class="dbg">Cargando…</div>
 
 <script>
 (function(){
-  const dbg = document.getElementById('dbg');
+  const dbg = document.getElementById('dbg'), btnSound = document.getElementById('btnSound');
   const log = (m,cls='')=>{ dbg.innerHTML=(cls?`<span class="${cls}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
   const q = new URLSearchParams(location.search);
 
-  // === Parámetros ===
-  const t  = q.get('t')  || '';                   // URL .mind (OBLIGATORIO)
-  const d  = q.get('d')  || '';                   // overlay PNG/JPG (opcional; si falta, plano verde)
+  // --- Parámetros ---
+  const t  = q.get('t') || '';
+  const d  = q.get('d') || '';
   const pw = +(q.get('pw')||2481), ph=+(q.get('ph')||3508), H=ph/pw;
   const overlayDebug = q.get('overlayDebug')==='1';
+  const debugRects = q.get('debugRects')==='1';
+  const dx = +(q.get('dx')||0), dy=+(q.get('dy')||0), sc=+(q.get('scale')||1), rot=+(q.get('rot')||0);
 
-  // Vídeos (hasta 3) v1..v3 con rectángulos px (x,y,w,h) referidos al overlay (origen arriba-izq)
-  const slots=[1,2,3].map(i=>({
-    id:i, v:q.get('v'+i),
-    x:+q.get('x'+i)||0, y:+q.get('y'+i)||0, w:+q.get('vw'+i)||0, h:+q.get('vh'+i)||0
-  })).filter(s=>s.v && s.w>0 && s.h>0);
+  const vSlots=[1,2,3].map(i=>({id:i,v:q.get('v'+i),x:+q.get('x'+i)||0,y:+q.get('y'+i)||0,w:+q.get('vw'+i)||0,h:+q.get('vh'+i)||0}))
+    .filter(s=>s.v&&s.w>0&&s.h>0);
+
+  const tSlots=[1,2,3].map(i=>{
+    const val=q.get('t'+i); if(!val) return null;
+    return {id:i,text:val,x:+q.get('xt'+i)||0,y:+q.get('yt'+i)||0,w:+q.get('wt'+i)||0,h:+q.get('ht'+i)||0,align:(q.get('ta'+i)||'center'),color:'#'+(q.get('tc'+i)||'ffffff')};
+  }).filter(Boolean);
+
+  const audioSrc=q.get('audio')||'';
+  let audioEl=null, audioWanted=false;
 
   if(!t){ log('❗ Falta ?t=<URL .mind>','err'); return; }
 
-  // Aplica el .mind remoto
   const scene=document.getElementById('scene');
-  scene.setAttribute('mindar-image',
-    `imageTargetSrc: ${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
+  scene.setAttribute('mindar-image',`imageTargetSrc:${t}; uiLoading: yes; autoStart: true; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.001;`);
   log('Cargado .mind desde URL','ok');
 
-  // Construye overlay (imagen o debug magenta) que cubre TODO el target (ancho=1, alto=H)
-  function buildOverlay(){
-    if (!d || overlayDebug){
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
-      p.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.35; transparent:true; side:double;');
-      p.setAttribute('animation__pulse','property:material.opacity;from:0.20;to:0.70;dir:alternate;loop:true;dur:800;easing:easeInOutSine');
-      return p;
-    } else {
-      const assets=document.createElement('a-assets'); assets.id='assets-overlay'; assets.setAttribute('timeout','30000'); scene.appendChild(assets);
+  // px → unidades (ancho 1, alto H)
+  const pxToUnits=(x,y,w,h)=>({wn:w/pw,hn:h/pw,cx:-0.5+(x+w/2)/pw,cy:(ph/pw)/2-(y+h/2)/pw});
+
+  // grupo raíz con ajustes finos
+  const makeRoot=()=>{
+    const root=document.createElement('a-entity');
+    root.setAttribute('position', `${dx/pw} ${-dy/pw} 0`);
+    root.setAttribute('scale', `${sc} ${sc} 1`);
+    if(rot) root.setAttribute('rotation',`0 0 ${rot}`);
+    return root;
+  };
+
+  // overlay
+  const buildOverlay=()=>{
+    const p=document.createElement('a-plane'); p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
+    if(!d||overlayDebug){
+      p.setAttribute('material','shader:flat; color:#ff00aa; opacity:0.30; transparent:true; side:double;');
+    }else{
+      const assets=document.getElementById('assets-overlay')||(()=>{const el=document.createElement('a-assets'); el.id='assets-overlay'; el.setAttribute('timeout','30000'); scene.appendChild(el); return el;})();
       const img=document.createElement('img'); img.id='overlayImg'; img.crossOrigin='anonymous'; img.src=d; assets.appendChild(img);
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',1); p.setAttribute('height',H); p.setAttribute('position','0 0 0');
-      p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:0; side:double;');
-      p.setAttribute('animation__fade','property:material.opacity;from:0;to:1;dur:400;easing:easeOutQuad;startEvents:show');
-      return p;
+      p.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; opacity:1; side:double;');
     }
-  }
+    return p;
+  };
 
-  // Construye un <video> DOM y su plano con COVER real (offset/repeat)
+  // vídeo COVER
   function buildVideoSlot(s){
-    const assets = document.getElementById('assets-videos') || (()=>{
-      const el=document.createElement('a-assets'); el.id='assets-videos'; el.setAttribute('timeout','60000'); scene.appendChild(el); return el;
-    })();
-
-    const v=document.createElement('video');
-    v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous';
-    // Sugerencia: vídeo 720p H.264 para compatibilidad
-    v.src=s.v; assets.appendChild(v);
-
-    // px -> unidades normalizadas
-    const wn=s.w/pw, hn=s.h/pw;
-    const cx=-0.5+(s.x+s.w/2)/pw, cy=(ph/pw)/2-(s.y+s.h/2)/pw;
-
-    const plane=document.createElement('a-plane');
-    plane.setAttribute('width',wn); plane.setAttribute('height',hn);
-    plane.setAttribute('position',`${cx} ${cy} 0.02`);
-    plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
-
-    function cover(){
-      const mesh=plane.getObject3D('mesh');
-      if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
-      const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h;
-      let rx=1,ry=1,ox=0,oy=0;
-      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; oy=0; }
-      else     { rx=1;     ry=vr/rr; ox=0;     oy=(1-ry)/2; }
-      tex.offset.set(ox,oy); tex.repeat.set(rx,ry);
-      tex.needsUpdate=true; mesh.material.needsUpdate=true;
-      log(`COVER v${s.id}: vr=${vr.toFixed(3)} rr=${rr.toFixed(3)}`,'ok');
-    }
+    const assets=document.getElementById('assets-videos')||(()=>{const el=document.createElement('a-assets'); el.id='assets-videos'; el.setAttribute('timeout','60000'); scene.appendChild(el); return el;})();
+    const v=document.createElement('video'); v.id='v'+s.id; v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+    v.muted=true; v.loop=true; v.preload='auto'; v.crossOrigin='anonymous'; v.src=s.v; assets.appendChild(v);
+    const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
+    const plane=document.createElement('a-plane'); plane.setAttribute('width',wn); plane.setAttribute('height',hn); plane.setAttribute('position',`${cx} ${cy} 0.02`); plane.setAttribute('material',`shader:flat; src:#v${s.id}; side:double;`);
+    function cover(){ const mesh=plane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v.videoWidth) return;
+      const tex=mesh.material.map, vr=v.videoWidth/v.videoHeight, rr=s.w/s.h; let rx=1,ry=1,ox=0,oy=0;
+      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true; log(`COVER v${s.id}`,'ok'); }
     plane.addEventListener('materialtextureloaded',cover);
     v.addEventListener('loadedmetadata',()=>{ v.play().catch(()=>{}); cover(); }, {once:true});
-    v.addEventListener('error',()=>log(`v${s.id}: error de carga`,'err'));
-
-    return {plane, video:v};
+    const group=document.createElement('a-entity'); group.appendChild(plane);
+    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.021`); wire.setAttribute('material','shader:flat; color:#00ffa0; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
+    return {group,video:v};
   }
 
-  // Monta overlay + (0..3) vídeos en todos los anchors: el que haga targetFound se verá
+  // texto (a-text) — ahora sí visible siempre
+  function buildTextSlot(s){
+    const {wn,hn,cx,cy}=pxToUnits(s.x,s.y,s.w,s.h);
+    const txt=document.createElement('a-text');
+    txt.setAttribute('value', s.text);
+    txt.setAttribute('align', s.align);
+    txt.setAttribute('color', s.color);
+    txt.setAttribute('width', wn);            // ancho en unidades normalizadas
+    txt.setAttribute('anchor','center');      // centra el pivot
+    txt.setAttribute('baseline','center');
+    txt.setAttribute('position', `${cx} ${cy} 0.03`);
+    // wireframe debug
+    const group=document.createElement('a-entity');
+    group.appendChild(txt);
+    if(debugRects){ const wire=document.createElement('a-plane'); wire.setAttribute('width',wn); wire.setAttribute('height',hn); wire.setAttribute('position',`${cx} ${cy} 0.029`); wire.setAttribute('material','shader:flat; color:#ffcc00; wireframe:true; transparent:true; opacity:0.9; side:double;'); group.appendChild(wire); }
+    return group;
+  }
+
+  // AUDIO opcional
+  if(audioSrc){
+    audioEl=new Audio(audioSrc);
+    audioEl.crossOrigin='anonymous';
+    audioEl.preload='auto';
+    audioEl.loop=false; // cambia si quieres loop
+    audioEl.volume=1.0;
+    audioWanted=true;
+    btnSound.hidden=false;
+  }
+  btnSound.onclick=()=>{ if(audioEl){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); } };
+
+  // monta en todos los anchors
   for(let i=0;i<8;i++){
     const a=document.getElementById('a'+i); if(!a) continue;
-
-    const overlay = buildOverlay(); a.appendChild(overlay);
-    const vobjs   = slots.map(buildVideoSlot);
-    vobjs.forEach(o=>{ if(o) a.appendChild(o.plane); });
+    const root=makeRoot(); a.appendChild(root);
+    const overlay=buildOverlay(); root.appendChild(overlay);
+    const vobjs=vSlots.map(buildVideoSlot); vobjs.forEach(o=>o&&root.appendChild(o.group));
+    const tobjs=tSlots.map(buildTextSlot);  tobjs.forEach(o=>o&&root.appendChild(o));
 
     a.addEventListener('targetFound', ()=>{
-      log('TARGET FOUND en índice '+i,'ok');
-      if(d && !overlayDebug) overlay.emit('show',null,false);
+      log('TARGET FOUND idx '+i,'ok');
       vobjs.forEach(o=>o && o.video && o.video.play && o.video.play().catch(()=>{}));
+      if(audioEl && audioWanted){ btnSound.hidden=false; } // mostramos botón
     });
-    a.addEventListener('targetLost', ()=> log('Perdido índice '+i,'warn'));
+    a.addEventListener('targetLost', ()=>{
+      vobjs.forEach(o=>o && o.video && o.video.pause && o.video.pause());
+      if(audioEl){ audioEl.pause(); btnSound.hidden=false; }
+      log('Perdido idx '+i,'warn');
+    });
   }
 
-  // Asegurar que el vídeo de cámara queda detrás del canvas (algunos navegadores lo inyectan tarde)
+  // z-index cámara OK
   const mo=new MutationObserver(()=>{
     document.querySelectorAll('video[playsinline][autoplay]').forEach(v=>{
       v.style.objectFit='cover'; v.style.width='100vw'; v.style.height='100vh';
       v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='0'; v.style.background='#000';
     });
-    const canvas=document.querySelector('canvas.a-canvas');
-    if(canvas){ canvas.style.zIndex='3'; canvas.style.position='fixed'; canvas.style.inset='0'; }
+    const canvas=document.querySelector('canvas.a-canvas'); if(canvas){ canvas.style.zIndex='3'; canvas.style.position='fixed'; canvas.style.inset='0'; }
   });
   mo.observe(document.documentElement,{subtree:true,childList:true});
 
   scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
   scene.addEventListener('arError', ()=>log('Error de cámara / permisos','err'));
 
-  // iOS: un toque para desbloquear autoplay si hiciera falta
+  // primer toque: intento de play por si el navegador exige gesto
   window.addEventListener('touchend', ()=>{
     document.querySelectorAll('video').forEach(el=>el.play().catch(()=>{}));
+    if(audioEl && audioWanted){ audioEl.play().then(()=>{btnSound.hidden=true;}).catch(()=>{}); }
   }, {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
-
