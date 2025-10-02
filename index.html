@@ -8,13 +8,10 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
-  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -41,8 +38,7 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity id="mouseRay" cursor="rayOrigin: mouse"
-              raycaster="objects: .ui3d,.heart,.dragplane; far: 3"></a-entity>
+    <a-entity id="mouseRay" cursor="rayOrigin: mouse" raycaster="objects: .ui3d,.heart,.dragplane; far: 3"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -54,7 +50,6 @@
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
-  /* ---------- Helpers ---------- */
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -63,19 +58,18 @@
     });
   }
 
-  /* ---------- Cargar JSON ---------- */
+  /* ========== Cargar JSON ========== */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ---------- MindAR ---------- */
+  /* ========== MindAR ========== */
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // vídeo de la cámara detrás en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -92,26 +86,24 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Póster: fondo blanco ---------- */
+  /* ========== Fondo blanco del póster ========== */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- Marco animado (glow + runners) ---------- */
+  /* ========== Marco animado (glow + runners) ========== */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const glow1 = CFG.colors?.wave1 || '#13d77a';
   const glow2 = CFG.colors?.wave2 || '#ffd54a';
 
-  // marco fino detrás del vídeo
   const frame=document.createElement('a-plane');
   frame.setAttribute('width',u.wn*1.012); frame.setAttribute('height',u.hn*1.012);
   frame.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
   frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frame); setRO(frame, 5, false, false);
 
-  // tiras luminosas (glow respirando)
   (function stripsGlow(){
     const t=0.004, z=0.018;
     const strips=[
@@ -131,7 +123,6 @@
     });
   })();
 
-  // runners que recorren el marco
   (function runners(){
     const z=0.019, w=0.02, h=0.006, dur=1800;
     function runner(x1,y1,x2,y2,color){
@@ -142,14 +133,13 @@
       r.setAttribute('animation__go',`property:position; to:${x2} ${y2} ${z}; dur:${dur}; dir:alternate; loop:true; easing:easeInOutSine`);
       root.appendChild(r); setRO(r, 25, false, false);
     }
-    // arriba L→R, abajo R→L, izquierda abajo→arriba, derecha arriba→abajo
     runner(u.cx-u.wn/2, u.cy+u.hn/2+0.01, u.cx+u.wn/2, u.cy+u.hn/2+0.01, glow1);
     runner(u.cx+u.wn/2, u.cy-u.hn/2-0.01, u.cx-u.wn/2, u.cy-u.hn/2-0.01, glow2);
     runner(u.cx-u.wn/2-0.01, u.cy-u.hn/2, u.cx-u.wn/2-0.01, u.cy+u.hn/2, glow2);
     runner(u.cx+u.wn/2+0.01, u.cy+u.hn/2, u.cx+u.wn/2+0.01, u.cy-u.hn/2, glow1);
   })();
 
-  /* ---------- Plano del VÍDEO (encima) ---------- */
+  /* ========== Plano del VÍDEO (encima) ========== */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
@@ -173,7 +163,6 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // Fallback automático si hiciera falta
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -186,14 +175,14 @@
   }
   function checkBlackFallback(){ const mesh=vPlane.getObject3D('mesh'); const map=mesh?.material?.map; if(!v1.videoWidth || !map) forceThreeVideoTexture(); }
 
-  /* ---------- Canvas overlay: textos + barra musical + cinta inferior ---------- */
+  /* ========== Canvas overlay (textos + barra musical) ========== */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');   // debajo del vídeo
+  overlay.setAttribute('position','0 0 0.0');
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlay); setRO(overlay, 3, false, false);
   overlay.addEventListener('loaded', ()=>{
@@ -206,7 +195,6 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ---------- Audio + analyser ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
@@ -214,19 +202,15 @@
     audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC();
-      analyser=acx.createAnalyser();
-      analyser.fftSize=128;
-      analyser.smoothingTimeConstant=0.88;
-      const src=acx.createMediaElementSource(audio);
-      src.connect(analyser); analyser.connect(acx.destination);
+      acx=new AC(); analyser=acx.createAnalyser();
+      analyser.fftSize=128; analyser.smoothingTimeConstant=0.88;
+      const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
     }catch{}
     audio.addEventListener('play', ()=>btnAudio.textContent='⏸ Audio');
     audio.addEventListener('pause',()=>btnAudio.textContent='▶️ Audio');
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Barra musical suave + picos + cinta inferior ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -249,13 +233,12 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra base
+    // Barra base + progreso
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
-    // Progreso y tiempos
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -300,49 +283,36 @@
         ctx.fillStyle = col;
         if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
-        // peak-hold
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = '#000';
-        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
-        else         ctx.fillRect(x, baseY+peakY,   w, 2);
+        // peak hold
+        ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
+        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
         ctx.globalAlpha = 1;
 
-        // glow barrido
         if(glow>0){
           const g = ctx.createLinearGradient(x,0,x+w,0);
           g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
           g.addColorStop(1, 'rgba(255,255,255,0)');
           ctx.fillStyle = g;
-          if(pass===0) ctx.fillRect(x, baseY-h, w, h);
-          else         ctx.fillRect(x, baseY,   w, h);
+          if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
         }
       }
     }
-
-    /* Cinta inferior sutil */
-    const bandH = Math.round(50*Cw/2048);
-    const yBand = Math.round((PH*0.88)*Ch/PH);
-    const g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
-    g2.addColorStop(0,'rgba(0,0,0,0.06)'); g2.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
 
     if(overlay.__tex) overlay.__tex.needsUpdate = true;
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Corazones con “física” + drag ---------- */
+  /* ========== Corazones con física + drag ========== */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
-  // área de juego: banda inferior del póster
   const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
 
-  // plano invisible para calcular intersecciones de drag
   const dragPlane=document.createElement('a-plane');
   dragPlane.classList.add('dragplane');
   dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
   dragPlane.setAttribute('position','0 0 0.07');
-  dragPlane.setAttribute('material','color:#fff; transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+  dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
   root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
 
   function spawnHeart(x=(area.x1+area.x2)/2, y=area.y2-0.05){
@@ -365,36 +335,31 @@
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('dragplane'));
     if(!hit) return null;
     const p = hit.point.clone();
-    root.object3D.worldToLocal(p); // coord locales del póster
+    root.object3D.worldToLocal(p);
     return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
   }
-
   function heartFromEl(el){ return hearts.find(h=>h.el===el)||null; }
 
   scene.addEventListener('mousedown', ()=>{
-    // ¿estamos mirando a un corazón?
     const ints = ray.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('heart'));
     if(!hit) return;
     const h = heartFromEl(hit.object.el); if(!h) return;
     const p = pointerLocal(); if(!p) return;
-    dragging = h;
-    dragOffset = {x: h.x - p.x, y: h.y - p.y};
+    dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
     lastPointer = p; lastTime = performance.now();
   });
   scene.addEventListener('mouseup', ()=>{ dragging=null; });
   scene.addEventListener('mouseleave', ()=>{ dragging=null; });
 
-  function heartsTick(){
+  (function heartsTick(){
     const dt = 1/60, g=-0.8, damp=0.55;
     const now = performance.now();
     const p = pointerLocal();
 
-    // drag
     if(dragging && p){
       const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
       const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-      // velocidad basada en desplazamiento del puntero
       if(lastPointer){
         const dtms = Math.max(16, now-lastTime);
         dragging.vx = (nx - dragging.x) / (dtms/1000);
@@ -404,59 +369,72 @@
       lastPointer = p; lastTime = now;
     }
 
-    // integración simple
     hearts.forEach(o=>{
       if(o!==dragging){
-        o.vy += g*dt;
-        o.x  += o.vx*dt;
-        o.y  += o.vy*dt;
+        o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt;
       }
-      // colisiones con bordes
       if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
       if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
       if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
       if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-      // render
       o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
       o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
     });
 
     requestAnimationFrame(heartsTick);
-  }
-  requestAnimationFrame(heartsTick);
+  })();
 
-  /* ---------- Estados / UI ---------- */
+  /* ========== START ROBUSTO DEL BOTÓN ========== */
+  async function ensureSceneLoaded(){
+    if(scene.hasLoaded) return;
+    await new Promise(res=>scene.addEventListener('loaded', res, {once:true}));
+  }
+  async function startMindAR(){
+    const comp = scene.components['mindar-image'];
+    const sys  = scene.systems['mindar-image-system'];
+    if(comp && comp.start) { await comp.start(); return; }
+    if(sys  && sys.start)  { await sys.start();  return; }
+    throw new Error('No MindAR start method');
+  }
+
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true; log('Pidiendo cámara…');
-      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      s.getTracks().forEach(t=>t.stop());
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      btnStart.disabled=true; log('Iniciando…');
+      await ensureSceneLoaded();
+      // 1) Intento directo (gesto del usuario presente)
+      await startMindAR();
       btnStart.textContent='Cámara lista';
-    }catch(e){
-      btnStart.disabled=false;
-      log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+    }catch(e1){
+      log('Reintentando con permiso previo…');
+      try{
+        // 2) Pedimos permiso y reintentamos
+        const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+        s.getTracks().forEach(t=>t.stop());
+        await startMindAR();
+        btnStart.textContent='Cámara lista';
+      }catch(e2){
+        btnStart.disabled=false;
+        log(`No se pudo iniciar la cámara (${e2.name||''} ${e2.message||e2})`);
+      }
     }
   };
 
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
-    // Audio autoplay
+    // audio autoplay
     setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
-    // Corazones de bienvenida
+    // corazones de bienvenida
     for(let i=0;i<4;i++) spawnHeart();
     log('Target FOUND');
   });
-
   anchor.addEventListener('targetLost', ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer gesto (iOS ayuda a media)
-  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
+  // primer gesto (ayuda iOS)
+  window.addEventListener('pointerup', ()=>{ btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
