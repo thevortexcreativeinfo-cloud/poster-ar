@@ -13,17 +13,22 @@
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* WebGL delante (interactivo) */
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
 
-  /* UI */
-  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
-  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
-  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
+  /* UI SIEMPRE ARRIBA */
+  .ui{
+    position:fixed;left:8px;top:8px;display:flex;gap:8px;
+    z-index:9999; pointer-events:auto;
+  }
+  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:10px 12px}
+  .dbg{
+    position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
+    padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9998;pointer-events:none;opacity:.2;transition:opacity .35s
+  }
   .dbg:hover{opacity:1}
-  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
+  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9999}
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
@@ -51,11 +56,9 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <!-- vídeo del cliente (se asigna por JS) -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Cursor para poder hacer click/tap en elementos 3D -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -66,22 +69,20 @@
 <script>
 (async function(){
   const dbg = document.getElementById('dbg');
-  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.9; setTimeout(()=>dbg.style.opacity=.16,1200); };
+  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.9; setTimeout(()=>dbg.style.opacity=.2,1200); };
   const qs = new URLSearchParams(location.search);
 
-  /* ================== CARGA DE CFG ================== */
-  // Soporta ?cfg=URL ABSOLUTA (url-encoded) o ?client=clienteA (usa /cfg/clienteA.json)
+  /* ===== CARGA CFG (client o cfg) ===== */
   function cfgUrlFromQuery(){
-    const client = qs.get('client');
     const cfg = qs.get('cfg');
-    if (cfg) return cfg; // puede ser absoluta o relativa (misma origin)
+    if (cfg) return cfg;
+    const client = qs.get('client');
     if (client) {
       const base = location.origin + (location.pathname.endsWith('/')? location.pathname : location.pathname.replace(/\/[^/]*$/,'/'));
       return base + 'cfg/' + encodeURIComponent(client) + '.json';
     }
     return null;
   }
-
   const cfgUrl = cfgUrlFromQuery();
   if(!cfgUrl){ log('❗ Falta ?cfg=URL o ?client=ID'); alert('Falta ?cfg=URL o ?client=ID'); return; }
 
@@ -91,25 +92,23 @@
     if(!r.ok) throw new Error('HTTP '+r.status);
     CFG = await r.json();
     log('CFG OK');
-  }catch(e){ log('❗ No pude cargar el cfg: '+(e.message||e)); alert('No pude cargar el cfg'); return; }
+  }catch(e){ log('❗ No pude cargar el cfg: '+(e.message||e)); alert('No pude cargar el cfg: '+(e.message||e)); return; }
 
-  // Defaults por si faltan campos
+  // Defaults
   CFG.pw ??= 2481; CFG.ph ??= 3508;
   CFG.colors ??= { title:'#000000', artist:'#000000', wave1:'#13d77a', wave2:'#ffd54a' };
   CFG.slotVid    ??= {x:296,y:316,w:1890,h:1682};
   CFG.slotTitle  ??= {x:200,y:2150,w:2080,h:200};
   CFG.slotArtist ??= {x:200,y:2330,w:2080,h:160};
   CFG.slotBar    ??= {x:300,y:2640,w:2060,h:26};
-  // slotPlay opcional: si existe, creamos el botón AR
   CFG.cal ??= {dx:0,dy:0,scale:1,rot:0};
   CFG.autoplayOnFound = !!CFG.autoplayOnFound;
   CFG.parallax = !!CFG.parallax;
 
-  /* ================== A-FRAME / MINDAR ================== */
+  /* ===== A-FRAME / MINDAR ===== */
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Cámara en cover (vídeo de la cámara)
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
@@ -129,7 +128,7 @@
   }
   applyCal();
 
-  // Vignette sutil para separar del entorno
+  // Vignette sutil
   const vignette=document.createElement('a-plane');
   vignette.setAttribute('width', 1.14);
   vignette.setAttribute('height', H*1.14);
@@ -137,7 +136,7 @@
   vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
   root.appendChild(vignette);
 
-  /* ================== VÍDEO ================== */
+  /* ===== VÍDEO ===== */
   const v1=document.getElementById('v1'); v1.src = CFG.video || '';
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
@@ -158,7 +157,7 @@
   vPlane.addEventListener('materialtextureloaded', setCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  // Ken Burns suave
+  // Ken Burns
   function kenBurns(){
     const B=vPlane.__base; if(!B) return;
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -169,7 +168,7 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ================== CANVAS OVERLAY ================== */
+  /* ===== OVERLAY EN CANVAS (títulos + barra + waveform) ===== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
@@ -190,12 +189,13 @@
   const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ================== AUDIO / WAVEFORM ================== */
-  const btnStart=document.getElementById('btnStart');
-  const btnAudio=document.getElementById('btnAudio');
+  /* ===== AUDIO ===== */
+  const btnStart = document.getElementById('btnStart');
+  const btnAudio = document.getElementById('btnAudio');
 
   let audio=null, acx=null, analyser=null, freqArr=null, userGesture=false, targetVisible=false, wantPlay=false, lastBeat=0;
   const bars = CFG.waveBars || 48;
+
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -203,17 +203,14 @@
       const AC=window.AudioContext||window.webkitAudioContext;
       acx=new AC();
       analyser=acx.createAnalyser();
-      analyser.fftSize=128; // un poco más detalle
-      freqArr=new Uint8Array(analyser.frequencyBinCount);
+      analyser.fftSize=128; freqArr=new Uint8Array(analyser.frequencyBinCount);
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
-    }catch(e){ /* sin WebAudio => fallback animado */ }
+    }catch(e){}
   }
 
   function updateAudioPlayback(){
     if(!audio) return;
-    // Solo suena si: usuario ha interactuado (gesto) Y el target está visible
-    // Además, si el usuario ha pedido pausar, no suena (wantPlay=false)
     const shouldPlay = userGesture && targetVisible && wantPlay;
     if(shouldPlay){
       if(acx && acx.state==='suspended') acx.resume().catch(()=>{});
@@ -225,41 +222,42 @@
     }
   }
 
-  // Botón UI
-  btnAudio.addEventListener('click', ()=>{
+  // Botón UI Audio (usa click + touchend y corta propagación)
+  const onAudioToggle = (e)=>{
+    e.preventDefault(); e.stopPropagation();
     userGesture=true; setupAudio();
-    // Toggle intención del usuario
     wantPlay = !(audio && !audio.paused);
     updateAudioPlayback();
-  });
+  };
+  btnAudio.addEventListener('click', onAudioToggle, {passive:false});
+  btnAudio.addEventListener('touchend', onAudioToggle, {passive:false});
 
-  // Botón AR (si existe slotPlay)
+  // Botón AR (opcional si hay slotPlay)
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const playBtn = document.createElement('a-circle');
     playBtn.classList.add('ui3d');
     playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
     playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible, solo hit area
+    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
     playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
     root.appendChild(playBtn);
-    playBtn.addEventListener('click', ()=>{
+    playBtn.addEventListener('click', (e)=>{
       userGesture=true; setupAudio();
-      // Alterna intención de reproducción
       wantPlay = !(audio && !audio.paused);
       playBtn.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);
       updateAudioPlayback();
     });
   }
 
-  // Dibujo overlay (títulos + barra + waveform + efectos)
+  // Dibujo overlay
   const waveTopHeight = Math.round(36*Cw/2048), waveGap = Math.round(26*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título con sombra y shimmer
+    // Título + shimmer
     const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -277,7 +275,7 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra de progreso
+    // Barra
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
@@ -299,20 +297,20 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble grande (audio-reactivo si hay analyser; si no, fallback “respira”)
-    const step=pbw/bars;
+    // Waveform doble
+    const step=pbw/(bars||48);
     const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
-    let level=0;
-    if(analyser && freqArr){ analyser.getByteFrequencyData(freqArr); }
+    let level=0, arr=null;
+    if(analyser && (arr=freqArr)) analyser.getByteFrequencyData(arr);
 
     ctx.save();
     for(let pass=0; pass<2; pass++){
       const baseY = (pass===0? byTop : byBot);
       const mirror = (pass===1);
-      for(let i=0;i<bars;i++){
+      for(let i=0;i<(bars||48);i++){
         let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-        if(freqArr){ v = (freqArr[2+i]||0)/255; level+=v; }
-        const h = Math.max(4, Math.round(v*waveTopHeight));
+        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
+        const h = Math.max(4, Math.round(v*Math.round(36*Cw/2048)));
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
         ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
@@ -320,9 +318,7 @@
       }
     }
     ctx.restore();
-
-    // Partículas al “beat”
-    if(freqArr){ level/=bars; const now=performance.now(); if(level>0.52 && now-lastBeat>200){ lastBeat=now; burstParticles('#ffd54a', 8); } }
+    if(arr){ level/=(bars||48); const now=performance.now(); if(level>0.52 && now-lastBeat>200){ lastBeat=now; burstParticles('#ffd54a', 8); } }
 
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
     requestAnimationFrame(draw);
@@ -343,7 +339,7 @@
     }
   }
 
-  /* ================== PARALLAX OPCIONAL ================== */
+  /* ===== PARALLAX (opcional) ===== */
   if(CFG.parallax){
     (function parallaxTick(){
       if(scene?.camera){
@@ -356,7 +352,8 @@
     })();
   }
 
-  /* ================== ESTADOS / UI ================== */
+  /* ===== ESTADOS / UI ===== */
+  // Mostrar calibración si ?cal=1
   const calBox = document.getElementById('cal');
   calBox.style.display = (qs.get('cal')==='1' ? 'flex' : 'none');
 
@@ -371,7 +368,6 @@
       applyCal();
     };
   });
-
   document.getElementById('copyUrl').onclick=async()=>{
     const url=new URL(location.href);
     const c=CFG.cal;
@@ -382,12 +378,10 @@
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
-  const btnStart=document.getElementById('btnStart');
-
+  // Arranque de cámara robusto (CLICK y TOUCH)
   async function startCamera(){
     try{
       btnStart.disabled=true; btnStart.textContent='Pidiendo cámara…';
-      // Pide permisos primero, para UX más clara
       const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
@@ -400,13 +394,14 @@
       log('❗ No se pudo abrir cámara: '+(e.message||e));
     }
   }
-  btnStart.addEventListener('click', ()=>{ userGesture=true; startCamera(); });
+  const onStartTap = (e)=>{ e.preventDefault(); e.stopPropagation(); userGesture=true; startCamera(); };
+  btnStart.addEventListener('click', onStartTap, {passive:false});
+  btnStart.addEventListener('touchend', onStartTap, {passive:false});
 
   anchor.addEventListener('targetFound', ()=>{
     targetVisible=true;
     root.emit('pop',null,false);
     v1.play().catch(()=>{});
-    // Si se quiere auto reproducir al detectar, marcamos intención de reproducción
     if(CFG.autoplayOnFound){ setupAudio(); wantPlay = true; }
     updateAudioPlayback();
     log('Target FOUND');
@@ -419,10 +414,10 @@
   });
 
   scene.addEventListener('arReady', ()=>log('Cámara OK'));
-  scene.addEventListener('arError', ()=>log('Error cámara/permisos'));
+  scene.addEventListener('arError',  ()=>log('Error cámara/permisos'));
 
-  // Gesto global de seguridad (arranca cámara con primer toque si no se pulsó el botón)
-  window.addEventListener('pointerup', ()=>{ if(!btnStart.disabled) btnStart.click(); }, {once:true,passive:true});
+  // Seguridad: si el usuario toca en cualquier parte, intenta arrancar
+  window.addEventListener('pointerup', (e)=>{ if(!btnStart.disabled) onStartTap(e); }, {once:true,passive:false});
 })();
 </script>
 </body>
