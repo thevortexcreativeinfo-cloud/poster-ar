@@ -8,18 +8,21 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  video[playsinline]{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0}
+  /* fuerza la cámara a cover detrás del canvas */
+  video[playsinline]{
+    position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000
+  }
   a-scene{position:fixed;inset:0;z-index:2}
   .ui{position:fixed;left:10px;top:10px;z-index:9;display:flex;gap:8px}
   .btn{padding:8px 12px;border-radius:8px;border:1px solid #345;background:#0f1522;color:#eaf2ff}
-  .log{position:fixed;right:10px;top:10px;z-index:9;color:#cfe3ff;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;max-width:42ch}
+  .log{position:fixed;right:10px;top:10px;z-index:9;color:#cfe3ff;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;max-width:46ch}
 </style>
 </head>
 <body>
 <div class="ui">
-  <button id="start" class="btn">📷 Abrir cámara</button>
+  <button id="start" class="btn" type="button" disabled>📷 Abrir cámara</button>
 </div>
-<div id="log" class="log">Listo…</div>
+<div id="log" class="log">Cargando escena…</div>
 
 <a-scene id="scene" embedded vr-mode-ui="enabled:false" loading-screen="enabled:false"
   mindar-image="autoStart:false; uiLoading: yes; maxTrack:1;"
@@ -36,26 +39,39 @@
   const logEl = document.getElementById('log');
   const say = m => { logEl.textContent = m; console.log('[TEST]', m); };
 
+  // Forzar estilo cover al <video> que crea MindAR
+  new MutationObserver(()=>{
+    document.querySelectorAll('video[playsinline]').forEach(v=>{
+      v.style.position='fixed'; v.style.inset='0'; v.style.width='100vw';
+      v.style.height='100vh'; v.style.objectFit='cover'; v.style.zIndex='0';
+      v.style.background='#000';
+    });
+  }).observe(document.documentElement,{subtree:true,childList:true});
+
+  // Esperar a que la escena esté lista antes de habilitar el botón
+  const scene = document.getElementById('scene');
+  await new Promise(res => scene.hasLoaded ? res() : scene.addEventListener('loaded', res, {once:true}));
+  document.getElementById('start').disabled = false;
+  say('Escena cargada. Preparando…');
+
   // 1) Comprobar que el .mind responde (CORS/200)
   try{
     const r = await fetch(t, {mode:'cors', cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
     say('OK .mind ('+r.status+')');
   }catch(e){
-    say('❗ No pude descargar el .mind: '+e.message);
+    say('❗ No pude descargar el .mind: '+(e.message||e));
     return;
   }
 
   // 2) Configurar MindAR con ese target
-  const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image', `autoStart:false; imageTargetSrc:${t}; uiLoading: yes; maxTrack:1;`);
 
-  // 3) Crear anchors 0..n-1
+  // 3) Crear anchors 0..n-1 con un plano verde para ver detección
   const holder = document.getElementById('anchors');
   for(let i=0;i<n;i++){
     const a=document.createElement('a-entity');
     a.setAttribute('mindar-image-target', `targetIndex:${i}`);
-    // un rectángulo verde para ver detección
     const p=document.createElement('a-plane');
     p.setAttribute('width',0.6); p.setAttribute('height',0.4);
     p.setAttribute('material','color:#00ff88; opacity:.45; side:double');
@@ -65,26 +81,42 @@
     a.addEventListener('targetLost',  ()=>say('…lost idx '+i));
   }
 
+  // Helper para arrancar MindAR (componente o sistema, según versión)
+  const startMindAR = async () => {
+    const sys = scene.systems['mindar-image-system'];
+    const comp= scene.components['mindar-image'];
+    if(sys && sys.start) return sys.start();
+    if(comp && comp.start) return comp.start();
+    throw new Error('MindAR no inicializado');
+  };
+
   // 4) Arranque robusto
   async function start(){
+    const btn = document.getElementById('start');
     try{
-      document.getElementById('start').disabled = true;
-      say('Pidiendo cámara…');
-      // pedir permisos primero (mejor UX)
-      const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      s.getTracks().forEach(t=>t.stop());
-      say('Permisos OK. Iniciando MindAR…');
-      const sys = scene.systems['mindar-image-system'];
-      const comp= scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      btn.disabled = true;
+      say('Iniciando MindAR…');
+      // Intento directo (muchos navegadores ya lo permiten tras un click)
+      await startMindAR();
       say('Cam lista. Apunta al póster.');
-    }catch(e){
-      say('❗ No se pudo abrir cámara: '+(e.message||e));
-      document.getElementById('start').disabled = false;
+    }catch(err1){
+      say('Pidiendo permiso de cámara…');
+      try{
+        // Pedimos permisos y paramos el stream inmediatamente
+        const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+        s.getTracks().forEach(t=>t.stop());
+        // Reintento MindAR bajo el mismo gesto de usuario
+        await startMindAR();
+        say('Cam lista. Apunta al póster.');
+      }catch(err2){
+        say('❗ No se pudo abrir cámara: '+(err2.message||err2));
+        btn.disabled = false;
+      }
     }
   }
+
   document.getElementById('start').onclick = start;
-  // primer toque auto
+  // Primer toque auto (mejora UX en móviles)
   window.addEventListener('pointerup', ()=>document.getElementById('start').click(), {once:true,passive:true});
 })();
 </script>
