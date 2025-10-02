@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara del móvil detrás (fullscreen cover) */
+  /* Cámara detrás */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
   /* WebGL delante */
@@ -37,7 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <video id="v1" playsinline webkit-playsinline muted autoplay preload="auto" crossorigin="anonymous"></video>
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
@@ -74,7 +74,7 @@
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // WebCam cover detrás
+  // vídeo de la cámara detrás en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -98,97 +98,72 @@
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  const drop=document.createElement('a-plane'); // sombra sutil
-  drop.setAttribute('width',1.06); drop.setAttribute('height',H*1.06);
-  drop.setAttribute('position','0 -0.01 -0.03');
-  drop.setAttribute('rotation','-4 0 0');
-  drop.setAttribute('material','shader:flat; color:#000; opacity:.14; transparent:true; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(drop); setRO(drop, 0, false, false);
+  /* ---------- Marco muy fino (no tapa) ---------- */
+  const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-  /* ---------- Marco + VÍDEO (asegurado que no queda tapado) ---------- */
+  const frameThin=document.createElement('a-plane');
+  frameThin.setAttribute('width',u.wn*1.012); frameThin.setAttribute('height',u.hn*1.012);
+  frameThin.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
+  frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
+  root.appendChild(frameThin); setRO(frameThin, 5, false, false);
+
+  /* ---------- Plano del VÍDEO (encima de todo lo demás) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';  // ej: https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4
+  v1.src = CFG.video || ''; // p.ej: https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4
   v1.load();
 
-  const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-
-  // Marco doble (SIEMPRE por debajo del vídeo)
-  const frameOuter=document.createElement('a-plane');
-  frameOuter.setAttribute('width',u.wn*1.045); frameOuter.setAttribute('height',u.hn*1.045);
-  frameOuter.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
-  frameOuter.setAttribute('material','shader:flat; color:#0b0b0b; side:double; opacity:.95');
-  root.appendChild(frameOuter); setRO(frameOuter, 10, false, false);
-
-  const frameInner=document.createElement('a-plane');
-  frameInner.setAttribute('width',u.wn*1.00); frameInner.setAttribute('height',u.hn*1.00);
-  frameInner.setAttribute('position',`${u.cx} ${u.cy} 0.006`);
-  frameInner.setAttribute('material','shader:flat; color:#e8eef2; side:double');
-  root.appendChild(frameInner); setRO(frameInner, 12, false, false);
-
-  // Plano del vídeo (EL ÚNICO con depthTest+Write)
   const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
+  vPlane.setAttribute('width',u.wn);
+  vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
-  vPlane.setAttribute('material','shader:flat; side:double; transparent:false');
+  // PRIMERA OPCIÓN: usar material src:#v1 (como cuando te iba)
+  vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
-  // Borde glow sutil (por debajo del vídeo)
-  const glowCol1 = CFG.colors?.wave1 || '#13d77a';
-  const glowCol2 = CFG.colors?.wave2 || '#ffd54a';
-  (function neon(){
-    const t=0.004;
-    const strips=[
-      {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
-      {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy-u.hn/2-t/2},
-      {w:t,       h:u.hn, x:u.cx-u.wn/2-t/2,y:u.cy},
-      {w:t,       h:u.hn, x:u.cx+u.wn/2+t/2,y:u.cy},
-    ];
-    strips.forEach((s,i)=>{
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',s.w); p.setAttribute('height',s.h);
-      p.setAttribute('position',`${s.x} ${s.y} 0.018`);
-      const col = i%2 ? glowCol2 : glowCol1;
-      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1300; loop:true; easing:easeInOutSine');
-      root.appendChild(p); setRO(p, 20, false, false);
-    });
-  })();
-
-  // VideoTexture + cover + reintentos (evita “vídeo negro”)
-  let videoTex=null;
-  function applyCover(tex){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
-    const t = tex || mesh.material.map; if(!t) return;
+  // cover (crop tipo object-fit:cover)
+  function coverFromMap(map){
+    if(!map || !v1.videoWidth) return;
     const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    t.offset.set(ox,oy); t.repeat.set(rx,ry); t.needsUpdate=true;
+    map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
   }
-  function setVideoTexture(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
-    videoTex = new AFRAME.THREE.VideoTexture(v1);
-    videoTex.needsUpdate = true;
-    mesh.material.map = videoTex; mesh.material.needsUpdate = true;
-    applyCover(videoTex);
-  }
-  const trySet = ()=>{ if(v1.videoWidth>0) setVideoTexture(); };
-  vPlane.addEventListener('loaded', trySet);
-  v1.addEventListener('loadeddata', trySet);
-  v1.addEventListener('playing', trySet);
+  vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
+  v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  /* ---------- Canvas overlay: textos + barra mejorada ---------- */
+  // FALLBACK AUTOMÁTICO a THREE.VideoTexture si el video queda negro
+  let forcedVideoTex=false;
+  function forceThreeVideoTexture(){
+    if(forcedVideoTex) return;
+    const mesh=vPlane.getObject3D('mesh'); if(!mesh) return;
+    const tex=new AFRAME.THREE.VideoTexture(v1);
+    tex.needsUpdate=true;
+    mesh.material.map=tex; mesh.material.needsUpdate=true;
+    coverFromMap(tex);
+    forcedVideoTex=true;
+    log('Fallback a THREE.VideoTexture');
+  }
+  // chequeo tras intentar reproducir
+  function checkBlackFallback(){
+    const mesh=vPlane.getObject3D('mesh');
+    const map=mesh?.material?.map;
+    // si no hay ancho de vídeo o el mapa no existe, forzamos fallback
+    if(!v1.videoWidth || !map) forceThreeVideoTexture();
+  }
+
+  /* ---------- Canvas overlay: textos + barra + animación inferior ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');  // debajo del vídeo
+  overlay.setAttribute('position','0 0 0.0');   // siempre por debajo del vídeo
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
-  root.appendChild(overlay); setRO(overlay, 5, false, false);
+  root.appendChild(overlay); setRO(overlay, 3, false, false);
   overlay.addEventListener('loaded', ()=>{
     const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
     const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
@@ -199,7 +174,7 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ---------- Audio + Analyser (smoothing) ---------- */
+  /* ---------- Audio + analyser ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
@@ -210,7 +185,7 @@
       acx=new AC();
       analyser=acx.createAnalyser();
       analyser.fftSize=128;
-      analyser.smoothingTimeConstant=0.88; // suave
+      analyser.smoothingTimeConstant=0.88;
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
     }catch{}
@@ -219,10 +194,9 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Barra musical PRO (decay + peaks + glow sweep) ---------- */
+  /* ---------- Barra musical mejorada + cinta inferior ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
-  const levels=new Array(BARS).fill(0);
-  const peaks=new Array(BARS).fill(0);
+  const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function draw(){
@@ -249,7 +223,7 @@
     ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
-    // Progreso y tiempos
+    // Progreso
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -258,6 +232,7 @@
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
+    // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
@@ -265,24 +240,21 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Espectro doble con smoothing y picos
+    // Espectro doble (suave con peaks y barrido)
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
     const step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
     const t = performance.now();
-    const sweep = (Math.sin(t/900)+1)/2; // 0..1
-    const sweepX = pbx + sweep*pbw;
+    const sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
 
     for(let pass=0; pass<2; pass++){
       const baseY = (pass===0? yTop : yBot);
-      const col1 = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+      const col = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
 
       for(let i=0;i<BARS;i++){
-        // valor nuevo (o idle si no hay audio)
         const bandIndex = Math.min(arr?arr.length-1:0, 2+i);
         const raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
-        // smoothing + decay
         levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
         peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
 
@@ -291,22 +263,20 @@
         const h = Math.max(3, Math.round(levels[i]*waveH));
         const peakY = Math.max(4, Math.round(peaks[i]*waveH));
 
-        // brillo que pasa por encima
         const dist = Math.abs((x+w/2) - sweepX);
         const glow = Math.max(0, 1 - dist/120);
 
-        // barra
-        ctx.fillStyle = col1;
+        ctx.fillStyle = col;
         if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
-        // "peak hold" (pequeña tapita)
+        // peak-hold
         ctx.globalAlpha = 0.7;
         ctx.fillStyle = '#000';
         if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
         else         ctx.fillRect(x, baseY+peakY,   w, 2);
         ctx.globalAlpha = 1;
 
-        // glow
+        // glow barrido
         if(glow>0){
           const g = ctx.createLinearGradient(x,0,x+w,0);
           g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
@@ -318,12 +288,36 @@
       }
     }
 
+    /* --- Cinta inferior animada (limpia y sutil) --- */
+    const bandH = Math.round(50*Cw/2048);
+    const yBand = Math.round((PH*0.88)*Ch/PH); // zona baja del póster
+    const g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
+    g2.addColorStop(0,'rgba(0,0,0,0.06)');
+    g2.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
+    // ondas suaves
+    ctx.save();
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    const A = 10, L = 220, v = t/900;
+    ctx.moveTo(0, yBand + bandH/2);
+    for(let x=0;x<=Cw;x+=6){
+      const y = yBand + bandH/2 + Math.sin((x+v*120)/L)*A + Math.sin((x+v*180)/L*1.7)*A*0.5;
+      ctx.lineTo(x,y);
+    }
+    ctx.lineTo(Cw, yBand+bandH); ctx.lineTo(0, yBand+bandH); ctx.closePath();
+    const c1 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
+    c1.addColorStop(0, (CFG.colors?.wave1||'#13d77a')+'22');
+    c1.addColorStop(1, (CFG.colors?.wave2||'#ffd54a')+'14');
+    ctx.fillStyle=c1; ctx.fill();
+    ctx.restore();
+
     if(overlay.__tex) overlay.__tex.needsUpdate = true;
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Ken Burns suave en vídeo ---------- */
+  /* ---------- Ken Burns suave ---------- */
   function kenBurns(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map){ requestAnimationFrame(kenBurns); return; }
     const t=mesh.material.map;
@@ -347,14 +341,16 @@
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
-      // sin alertas, solo log
     }
   };
 
   anchor.addEventListener('targetFound', async ()=>{
-    // Vídeo
-    try{ await v1.play(); setTimeout(()=>{ if(!videoTex) trySet(); }, 60); }catch{}
-    // Audio autoplay
+    try{
+      // reproduce el vídeo y revisa fallback a los 200ms
+      await v1.play();
+      setTimeout(checkBlackFallback, 200);
+    }catch{}
+    // audio autoplay
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
@@ -365,9 +361,10 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer gesto para iOS
+  // primer gesto (iOS ayuda a media)
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
+
