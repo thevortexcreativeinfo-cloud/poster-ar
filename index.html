@@ -3,29 +3,41 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Cinematic FIX</title>
+<title>Poster AR · Estable + Calibración</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara en cover detrás del canvas */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
-  /* Canvas delante */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  /* UI */
-  .ui{position:fixed;inset:0;display:flex;gap:10px;align-items:flex-start;padding:10px;z-index:4}
-  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:12px;padding:10px 14px}
-  .dbg{margin-left:auto;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;color:#cfe3ff;font:12px/1.35 system-ui;max-width:60vw}
-  .ok{color:#7de0ca}.warn{color:#ffce7a}.err{color:#ff9a9a}
+  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:4}
+  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
+  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:4}
+  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:96vw;z-index:4}
+  .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
 <body>
 <div class="ui">
   <button id="btnStart" class="btn">📷 Abrir cámara</button>
   <button id="btnSound" class="btn" hidden>🔊 Activar sonido</button>
-  <div id="dbg" class="dbg">Cargando…</div>
+</div>
+<div id="dbg" class="dbg">Cargando…</div>
+
+<!-- UI de calibración -->
+<div id="cal" class="cal">
+  <button data-act="dx-" class="btn">X−</button>
+  <button data-act="dx+" class="btn">X+</button>
+  <button data-act="dy-" class="btn">Y−</button>
+  <button data-act="dy+" class="btn">Y+</button>
+  <button data-act="sc-" class="btn">Scale−</button>
+  <button data-act="sc+" class="btn">Scale+</button>
+  <button data-act="rt-" class="btn">Rot−</button>
+  <button data-act="rt+" class="btn">Rot+</button>
+  <button id="copyUrl" class="btn">🔗 Copiar URL</button>
+  <span id="readout" class="chip"></span>
 </div>
 
 <a-scene id="scene"
@@ -37,8 +49,6 @@
 
   <a-assets id="assets" timeout="60000">
     <img id="overlayImg" crossorigin="anonymous"/>
-    <img id="glare" crossorigin="anonymous"
-         src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='white' stop-opacity='0'/><stop offset='0.45' stop-color='white' stop-opacity='0.22'/><stop offset='0.55' stop-color='white' stop-opacity='0.1'/><stop offset='1' stop-color='white' stop-opacity='0'/></linearGradient></defs><rect width='1024' height='1024' fill='url(%23g)'/></svg>"/>
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -47,312 +57,174 @@
 </a-scene>
 
 <script>
-/* ========= Utilidades/Componentes ========= */
-AFRAME.registerComponent('render-order', {
-  schema:{value:{type:'int',default:0}},
-  init(){
-    this.el.addEventListener('object3dset', ()=>{
-      const obj=this.el.getObject3D('mesh')||this.el.object3D;
-      if(!obj) return;
-      obj.traverse(o=>{ if(o.isMesh){ o.renderOrder=this.data.value; o.material && (o.material.depthTest=false, o.material.needsUpdate=true); }});
-    });
-  }
-});
-
-AFRAME.registerComponent('canvas-text', {
-  schema:{
-    value:{type:'string', default:''},
-    color:{type:'string', default:'#000000'},
-    align:{type:'string', default:'center'},
-    w:{type:'int', default:800}, h:{type:'int', default:200}
+/* ===== Config fija (tu caso) ===== */
+const BASE = {
+  t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
+  d: 'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png',
+  pw: 2481, ph: 3508,
+  video: {
+    src: 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
+    // coordenadas escaladas desde 596×842 → 2481×3508 (las que te funcionaban)
+    x: 296, y: 316, w: 1890, h: 1682
   },
-  init(){ this._apply(); },
-  update(){ this._apply(); },
-  _apply(){
-    const d=this.data;
-    const scale=2, cw=Math.max(64,Math.min(2048,Math.round(d.w*scale))), ch=Math.max(32,Math.min(1024,Math.round(d.h*scale)));
-    const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
-    ctx.clearRect(0,0,cw,ch);
-    ctx.fillStyle=d.color; ctx.shadowColor='rgba(0,0,0,0.35)'; ctx.shadowBlur=Math.floor(ch*0.06); ctx.shadowOffsetY=Math.floor(ch*0.03);
-    const fam='600 64px "Inter", system-ui, -apple-system, Segoe UI, Roboto';
-    let size=Math.floor(ch*0.72), lo=12, hi=Math.floor(ch*0.9), pad=Math.floor(cw*0.04);
-    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=fam.replace('64px',mid+'px'); if(ctx.measureText(d.value).width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
-    ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle';
-    ctx.textAlign=(d.align==='left'?'left':d.align==='right'?'right':'center');
-    const x=(d.align==='left')?pad:(d.align==='right')?(cw-pad):(cw/2), y=ch/2; ctx.fillText(d.value,x,y);
+  texts: [
+    { value:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
+    { value:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' }
+  ],
+  // audio + barra (simple, sin EQ)
+  audio: 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3',
+  progress: { x:300, y:2640, w:2060, h:18, bg:'#000000', fill:'#13d77a', knob:'#000000' }
+};
+/* Leer ajustes finos desde la URL (o usar defaults) */
+const qs=new URLSearchParams(location.search);
+const CONF = {
+  ...BASE,
+  dx: +(qs.get('dx')||0), dy: +(qs.get('dy')||0),
+  scale: +(qs.get('scale')||1), rot: +(qs.get('rot')||0),
+  showCal: qs.get('cal')!=='0' // cal=0 para ocultar la UI
+};
+/* ================================= */
 
-    const mesh = (this.el.getObject3D('mesh')||this.el.object3D);
-    if(!mesh){ this.el.addEventListener('object3dset', ()=>this._apply(), {once:true}); return; }
-    const tex=new AFRAME.THREE.CanvasTexture(c); tex.needsUpdate=true;
-    const target = this.el.getObject3D('mesh'); if(!target) return;
-    target.material.map=tex; target.material.transparent=true; target.material.color.set('#ffffff');
-    target.material.needsUpdate=true;
+const dbg = document.getElementById('dbg');
+const log=(m)=>{ dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
+
+const scene=document.getElementById('scene');
+scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} });
+
+/* Cámara en cover asegurada */
+new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
+  if(v.srcObject instanceof MediaStream){
+    Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
   }
-});
+});}).observe(document.documentElement,{subtree:true,childList:true});
 
-// Zoom+pan leve en bucle
-AFRAME.registerComponent('ken-burns', {
-  schema:{amp:{default:0.02}, speed:{default:8000}, panx:{default:0.003}, pany:{default:-0.002}},
-  init(){ this.dir=1; this.t0=performance.now(); this.basePos=this.el.object3D.position.clone(); },
-  tick(){
-    const t=performance.now()-this.t0; const p=(Math.sin(t/this.data.speed*2*Math.PI)+1)/2; // 0..1
-    const s=1 + this.data.amp * (p*2-1); this.el.object3D.scale.set(s,s,1);
-    this.el.object3D.position.set(
-      this.basePos.x + this.data.panx*(p*2-1),
-      this.basePos.y + this.data.pany*(p*2-1),
-      this.basePos.z
-    );
-  }
-});
+/* Assets */
+overlayImg.src = CONF.d || '';
+const v1=document.getElementById('v1'); v1.src=CONF.video.src;
 
-// Parallax leve sin librerías
-AFRAME.registerComponent('parallax-tilt', {
-  schema:{amount:{default:0.8}}, // grados máx
-  tick(){
-    const sc=this.el.sceneEl; if(!sc || !sc.camera) return;
-    const obj=this.el.object3D; const cam=sc.camera;
-    const wp=obj.getWorldPosition(new AFRAME.THREE.Vector3());
-    const toCam=cam.position.clone().sub(wp);
-    const yaw=AFRAME.THREE.MathUtils.clamp(toCam.x*0.02, -this.data.amount, this.data.amount);
-    const pitch=AFRAME.THREE.MathUtils.clamp(toCam.y*0.02, -this.data.amount, this.data.amount);
-    obj.rotation.x = AFRAME.THREE.MathUtils.degToRad(pitch);
-    obj.rotation.y = AFRAME.THREE.MathUtils.degToRad(yaw);
-  }
-});
-/* ========================================= */
+/* Geometría */
+const H = CONF.ph/CONF.pw;
+const px2=(x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw, cx:-0.5+(x+w/2)/CONF.pw, cy:H/2 - (y+h/2)/CONF.pw });
 
-(function(){
-  const dbg = document.getElementById('dbg'), btnStart=document.getElementById('btnStart'), btnSound=document.getElementById('btnSound');
-  const log=(m,c='')=>{ dbg.innerHTML=(c?`<span class="${c}">${m}</span>`:m)+'<br>'+dbg.innerHTML; console.log('[AR]',m); };
-  window.onerror=(msg,src,line,col)=>log('JS ERROR: '+msg+' @'+line+':'+col,'err');
-
-  /* ===== CONFIG FIJA ===== */
-  const CONF = {
-    t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
-    d: 'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png',
-    pw: 2481, ph: 3508,
-    video: {
-      src: 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
-      x: 296, y: 316, w: 1890, h: 1682
-    },
-    texts: [
-      { value:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
-      { value:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' }
-    ],
-    timeText: { x:200, y:2550, w:2080, h:120, align:'center', color:'#000000' },
-    audio: 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3',
-    progress: { x:300, y:2640, w:2060, h:18, bg:'#000000', fill:'#13d77a', knob:'#000000' },
-    dx:0, dy:0, scale:1, rot:0,
-    parallax:true
-  };
-  /* ======================= */
-
-  const scene=document.getElementById('scene');
-  scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
-  scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} log('Scene lista','ok'); });
-
-  // Cámara cover
-  const mo=new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
-    if(v.srcObject instanceof MediaStream){
-      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
-    }
-  }); });
-  mo.observe(document.documentElement,{subtree:true,childList:true});
-
-  // Assets + helpers
-  overlayImg.src = CONF.d || '';
-  const v1=document.getElementById('v1'); v1.src=CONF.video.src;
-  const H = CONF.ph/CONF.pw;
-  const px2=(x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw, cx:-0.5+(x+w/2)/CONF.pw, cy:H/2 - (y+h/2)/CONF.pw });
-
-  // Anchor + root
-  const anchor=document.getElementById('anchor');
-  const root=document.createElement('a-entity');
+/* Anchor + root */
+const anchor=document.getElementById('anchor');
+const root=document.createElement('a-entity');
+function applyTransform(){
   root.setAttribute('position', `${CONF.dx/CONF.pw} ${-CONF.dy/CONF.pw} 0`);
   root.setAttribute('scale', `${CONF.scale} ${CONF.scale} 1`);
-  if(CONF.rot) root.setAttribute('rotation',`0 0 ${CONF.rot}`);
-  if(CONF.parallax) root.setAttribute('parallax-tilt','amount:0.6');
-  anchor.appendChild(root);
+  root.setAttribute('rotation', `0 0 ${CONF.rot}`);
+  readout.textContent = `dx:${CONF.dx}px  dy:${CONF.dy}px  scale:${CONF.scale.toFixed(3)}  rot:${CONF.rot}°`;
+}
+applyTransform();
+anchor.appendChild(root);
 
-  // Overlay
-  const overlay=document.createElement('a-plane');
-  overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
-  overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa; opacity:0.25;'} transparent:true; side:double; depthTest:false; opacity:1`);
-  overlay.setAttribute('render-order','10');
-  // anim entrada
-  overlay.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:320; easing:easeOutQuad; startEvents:show');
-  overlay.setAttribute('animation__pop','property:scale; from:0.97 0.97 1; to:1 1 1; dur:260; easing:easeOutQuad; startEvents:show');
-  root.appendChild(overlay);
+/* Overlay completo (arriba del target) */
+const overlay=document.createElement('a-plane');
+overlay.setAttribute('width',1); overlay.setAttribute('height',H);
+overlay.setAttribute('position','0 0 0.0');
+overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa;'} transparent:true; side:double; depthTest:false; opacity:1`);
+root.appendChild(overlay);
 
-  // Vídeo (grupo con marco/glow/glare + ken-burns)
-  const v=CONF.video; const u=px2(v.x,v.y,v.w,v.h);
-  const vWrap=document.createElement('a-entity');
-  vWrap.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
-  vWrap.setAttribute('ken-burns','amp:0.02; speed:9000; panx:0.003; pany:-0.002');
-  // marco detrás
-  const frame=document.createElement('a-plane');
-  frame.setAttribute('width',u.wn*1.01); frame.setAttribute('height',u.hn*1.01);
-  frame.setAttribute('position','0 0 -0.001');
-  frame.setAttribute('material','shader:flat; color:#000000; opacity:0.5; transparent:true; depthTest:false');
-  frame.setAttribute('render-order','18');
-  // vídeo
-  const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
-  vPlane.setAttribute('render-order','20');
-  // glare encima (aditivo → nunca oscurece)
-  const glare=document.createElement('a-plane');
-  glare.setAttribute('width',u.wn); glare.setAttribute('height',u.hn);
-  glare.setAttribute('material','shader:flat; src:#glare; transparent:true; opacity:0.16; depthTest:false');
-  glare.setAttribute('render-order','21');
-  glare.addEventListener('object3dset', ()=>{
-    const m = glare.getObject3D('mesh'); if(m && m.material){ m.material.blending = AFRAME.THREE.AdditiveBlending; m.material.needsUpdate=true; }
-  });
+/* Vídeo SIN efectos (para encuadrar fino) */
+const v=CONF.video; const u=px2(v.x,v.y,v.w,v.h);
+const vPlane=document.createElement('a-plane');
+vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
+vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
+vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
+root.appendChild(vPlane);
 
-  // COVER
-  function cover(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
-    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
-    if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
-  }
-  vPlane.addEventListener('materialtextureloaded',cover);
-  v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
+/* COVER a la textura del vídeo */
+function cover(){
+  const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
+  const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
+  if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+  tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+}
+vPlane.addEventListener('materialtextureloaded',cover);
+v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
 
-  vWrap.appendChild(frame); vWrap.appendChild(vPlane); vWrap.appendChild(glare);
-  root.appendChild(vWrap);
+/* Textos por canvas → textura (si tu overlay NO trae textos) */
+function addText(slot){
+  const g=px2(slot.x,slot.y,slot.w,slot.h);
+  const p=document.createElement('a-plane');
+  p.setAttribute('width',g.wn); p.setAttribute('height',g.hn);
+  p.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
+  p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  // canvas
+  const s=2, cw=Math.min(2048,Math.max(64,Math.round(slot.w*s))), ch=Math.min(1024,Math.max(32,Math.round(slot.h*s)));
+  const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
+  ctx.fillStyle=slot.color; ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=Math.floor(ch*.06); ctx.shadowOffsetY=Math.floor(ch*.03);
+  const fam='600 64px system-ui,Segoe UI,Roboto';
+  let size=Math.floor(ch*.72), lo=12, hi=Math.floor(ch*.9), pad=Math.floor(cw*.04);
+  while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=fam.replace('64px',mid+'px'); if(ctx.measureText(slot.value).width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
+  ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle';
+  ctx.textAlign=(slot.align==='left'?'left':slot.align==='right'?'right':'center');
+  const x=(slot.align==='left')?pad:(slot.align==='right')?(cw-pad):(cw/2), y=ch/2; ctx.fillText(slot.value,x,y);
+  p.addEventListener('loaded',()=>{ const mesh=p.getObject3D('mesh'); if(!mesh) return;
+    const tex=new AFRAME.THREE.CanvasTexture(c); tex.needsUpdate=true; mesh.material.map=tex; mesh.material.needsUpdate=true; });
+  root.appendChild(p);
+}
+BASE.texts.forEach(addText);
 
-  // Textos (canvas → textura) con anim
-  function addText(slot){
-    const g=px2(slot.x,slot.y,slot.w,slot.h);
-    const p=document.createElement('a-plane');
-    p.setAttribute('width',g.wn); p.setAttribute('height',g.hn);
-    p.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
-    p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
-    p.setAttribute('canvas-text', `value:${encodeURIComponent(slot.value)}; color:${slot.color}; align:${slot.align}; w:${slot.w}; h:${slot.h}`);
-    p.setAttribute('render-order','30');
-    p.addEventListener('loaded',()=>p.emit('show',null,false));
-    p.setAttribute('animation__fade','property:material.opacity;from:0;to:1;dur:260;easing:easeOutQuad;startEvents:show');
-    p.setAttribute('animation__slide','property:position; to:'+g.cx+' '+(g.cy+0.003)+' 0.12; dir:alternate; loop:true; dur:1100; easing:easeInOutSine');
-    root.appendChild(p);
-    return p;
-  }
-  CONF.texts.forEach(addText);
+/* Audio sencillo + barra */
+let audio=null, userOK=false, visible=false, prog=null;
+if(BASE.audio){ audio=new Audio(BASE.audio); audio.crossOrigin='anonymous'; audio.preload='auto'; }
+function makeProgress(x,y,w,h,bg,fill,knob){
+  const g=px2(x,y,w,h), group=document.createElement('a-entity'); group.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
+  const bgp=document.createElement('a-plane'); bgp.setAttribute('width',g.wn); bgp.setAttribute('height',g.hn);
+  bgp.setAttribute('material',`shader:flat; color:${bg}; transparent:true; opacity:0.9; side:double; depthTest:false`); bgp.setAttribute('position',`${g.wn/2} 0 0`);
+  const fillp=document.createElement('a-plane'); fillp.setAttribute('width',0.0001); fillp.setAttribute('height',g.hn);
+  fillp.setAttribute('material',`shader:flat; color:${fill}; transparent:true; side:double; depthTest:false`); fillp.setAttribute('position',`0 0 0.001`);
+  const knobp=document.createElement('a-circle'); knobp.setAttribute('radius',g.hn*0.9/2);
+  knobp.setAttribute('material',`shader:flat; color:${knob}; side:double; depthTest:false`); knobp.setAttribute('position',`0 0 0.002`);
+  group.appendChild(bgp); group.appendChild(fillp); group.appendChild(knobp);
+  let s=0; return {group, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); s=s*0.85+c*0.15; const wnow=g.wn*s; fillp.setAttribute('width',wnow); fillp.setAttribute('position',`${wnow/2} 0 0.001`); knobp.setAttribute('position',`${wnow} 0 0.002`);} };
+}
+if(BASE.audio){ prog=makeProgress(BASE.progress.x,BASE.progress.y,BASE.progress.w,BASE.progress.h,BASE.progress.bg,BASE.progress.fill,BASE.progress.knob); root.appendChild(prog.group); }
 
-  // Reloj (elapsed/total) dinámico
-  let timePlane=null, timeCanvas=null, timeTex=null;
-  if(CONF.timeText){
-    const s=CONF.timeText, g=px2(s.x,s.y,s.w,s.h);
-    timePlane=document.createElement('a-plane');
-    timePlane.setAttribute('width',g.wn); timePlane.setAttribute('height',g.hn);
-    timePlane.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
-    timePlane.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
-    timePlane.setAttribute('render-order','30');
-    timePlane.addEventListener('loaded',()=>{
-      const mesh=timePlane.getObject3D('mesh'); if(!mesh) return;
-      timeCanvas=document.createElement('canvas'); timeCanvas.width=Math.min(1024,Math.round(s.w*2)); timeCanvas.height=Math.min(256,Math.round(s.h*2));
-      timeTex=new AFRAME.THREE.CanvasTexture(timeCanvas); mesh.material.map=timeTex; mesh.material.needsUpdate=true;
-      drawTime(0,0,true);
-    });
-    root.appendChild(timePlane);
-  }
-  function drawTime(el,du,force){
-    if(!timeCanvas) return;
-    const ctx=timeCanvas.getContext('2d');
-    const t=(x)=>String(Math.floor(x/60)).padStart(1,'0')+':'+String(Math.floor(x%60)).padStart(2,'0');
-    ctx.clearRect(0,0,timeCanvas.width,timeCanvas.height);
-    ctx.fillStyle=CONF.timeText.color; ctx.font='600 '+Math.floor(timeCanvas.height*0.7)+'px system-ui,Segoe UI,Roboto';
-    ctx.textBaseline='middle'; ctx.textAlign='center';
-    ctx.fillText(`${isFinite(el)?t(el):'0:00'}   /   ${isFinite(du)?t(du):'0:00'}`, timeCanvas.width/2, timeCanvas.height/2);
-    timeTex.needsUpdate=true;
-  }
+function tryAudio(){ if(!audio) return; if(visible && userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; } else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; }}
 
-  // Audio, barra y EQ ligero
-  let audio=null, userOK=false, visible=false, prog=null, analyser=null, eqBars=[];
-  if(CONF.audio){ audio=new Audio(CONF.audio); audio.crossOrigin='anonymous'; audio.preload='auto'; }
-  function makeProgress(x,y,w,h,bg,fill,knob){
-    const g=px2(x,y,w,h), group=document.createElement('a-entity'); group.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
-    const bgp=document.createElement('a-plane'); bgp.setAttribute('width',g.wn); bgp.setAttribute('height',g.hn);
-    bgp.setAttribute('material',`shader:flat; color:${bg}; transparent:true; opacity:0.9; side:double; depthTest:false`); bgp.setAttribute('position',`${g.wn/2} 0 0`);
-    const fillp=document.createElement('a-plane'); fillp.setAttribute('width',0.0001); fillp.setAttribute('height',g.hn);
-    fillp.setAttribute('material',`shader:flat; color:${fill}; transparent:true; side:double; depthTest:false`); fillp.setAttribute('position',`0 0 0.001`);
-    const knobp=document.createElement('a-circle'); knobp.setAttribute('radius',g.hn*0.9/2);
-    knobp.setAttribute('material',`shader:flat; color:${knob}; side:double; depthTest:false`); knobp.setAttribute('position',`0 0 0.002`);
-    group.appendChild(bgp); group.appendChild(fillp); group.appendChild(knobp);
-    let s=0; return {group, set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); s=s*0.85+c*0.15; const wnow=g.wn*s; fillp.setAttribute('width',wnow); fillp.setAttribute('position',`${wnow/2} 0 0.001`); knobp.setAttribute('position',`${wnow} 0 0.002`);} };
-  }
-  if(CONF.audio){ prog=makeProgress(CONF.progress.x,CONF.progress.y,CONF.progress.w,CONF.progress.h,CONF.progress.bg,CONF.progress.fill,CONF.progress.knob); root.appendChild(prog.group); }
+/* Eventos AR */
+anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); tryAudio(); log('Target FOUND'); });
+anchor.addEventListener('targetLost',  ()=>{ visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST'); });
 
-  function makeEQ(){
-    const n=12, pad=6; const g=px2(CONF.progress.x,CONF.progress.y-38,CONF.progress.w,38);
-    const wrap=document.createElement('a-entity'); wrap.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.11`);
-    const bw=(g.wn - (n-1)*(pad/CONF.pw))/n, bh=g.hn*1.8;
-    for(let i=0;i<n;i++){
-      const b=document.createElement('a-plane');
-      b.setAttribute('width',bw); b.setAttribute('height',Math.max(0.002,bh*0.12));
-      b.setAttribute('position',`${(bw+pad/CONF.pw)*i + bw/2} 0 0`);
-      b.setAttribute('material','shader:flat; color:#13d77a; transparent:true; opacity:0.95; depthTest:false');
-      wrap.appendChild(b); eqBars.push({el:b,maxH:bh});
-    }
-    root.appendChild(wrap);
-  }
-  if(CONF.audio) makeEQ();
-
-  function setupAudioGraph(){
-    if(!audio || analyser) return;
-    const ctx=new (window.AudioContext||window.webkitAudioContext)();
-    const src=ctx.createMediaElementSource(audio);
-    analyser=ctx.createAnalyser(); analyser.fftSize=256; analyser.smoothingTimeConstant=0.85;
-    src.connect(analyser); analyser.connect(ctx.destination);
-    log('WebAudio listo','ok');
-  }
-
-  function tryAudio(){ if(!audio) return;
-    if(visible && userOK){ setupAudioGraph(); audio.play().catch(()=>{}); btnSound.hidden=true; }
-    else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; }
-  }
-  btnSound.onclick=()=>{ userOK=true; tryAudio(); };
-
-  // Eventos AR
-  anchor.addEventListener('targetFound', ()=>{
-    visible=true; v1.play().catch(()=>{}); overlay.emit('show',null,false); tryAudio(); log('Target FOUND','ok');
-  });
-  anchor.addEventListener('targetLost', ()=>{
-    visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST','warn');
-  });
-
-  // Loops: progreso, reloj y eq
-  const freq=new Uint8Array(128);
-  function tick(){
-    if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); drawTime(audio.currentTime, audio.duration); }
-    if(analyser && eqBars.length){ analyser.getByteFrequencyData(freq);
-      const step=Math.floor(freq.length/eqBars.length);
-      for(let i=0;i<eqBars.length;i++){
-        let sum=0; for(let j=0;j<step;j++) sum+=freq[i*step+j];
-        const h = Math.max(0.02, (sum/step)/255 * eqBars[i].maxH);
-        eqBars[i].el.setAttribute('height', h);
-      }
-    }
-    requestAnimationFrame(tick);
-  }
+/* Ticks */
+function tick(){
+  if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); }
   requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
 
-  scene.addEventListener('arReady', ()=>log('Cámara OK','ok'));
-  scene.addEventListener('arError', e=>log('Error cámara/permisos '+(e?.detail||''),'err'));
+/* Controles */
+const btnStart=document.getElementById('btnStart'), btnSound=document.getElementById('btnSound');
+btnStart.onclick=async()=>{ try{ await scene.systems['mindar-image-system'].start(); btnStart.disabled=true; btnStart.textContent='Cámara lista'; log('Cámara iniciada'); }catch(e){ log('No se pudo iniciar cámara'); } };
+btnSound.onclick=()=>{ userOK=true; tryAudio(); };
+if(!CONF.showCal) document.getElementById('cal').style.display='none';
 
-  // Botón: abrir cámara
-  btnStart.onclick=async()=>{
-    try{
-      await scene.systems['mindar-image-system'].start();
-      btnStart.disabled=true; btnStart.textContent='Cámara lista';
-      log('Cámara iniciada','ok');
-    }catch(e){ log('No se pudo iniciar cámara: '+e,'err'); }
+/* Calibración */
+const readout=document.getElementById('readout'); function rerender(){ applyTransform(); }
+document.querySelectorAll('#cal [data-act]').forEach(b=>{
+  b.onclick=()=>{
+    const stepPx=6, stepSc=0.005, stepRt=0.2;
+    const a=b.dataset.act;
+    if(a==='dx-') CONF.dx-=stepPx; if(a==='dx+') CONF.dx+=stepPx;
+    if(a==='dy-') CONF.dy-=stepPx; if(a==='dy+') CONF.dy+=stepPx;
+    if(a==='sc-') CONF.scale=Math.max(0.9, CONF.scale-stepSc);
+    if(a==='sc+') CONF.scale=Math.min(1.1, CONF.scale+stepSc);
+    if(a==='rt-') CONF.rot-=stepRt; if(a==='rt+') CONF.rot+=stepRt;
+    rerender();
   };
-
-  // Desbloqueo autoplay
-  window.addEventListener('touchend', ()=>{ v1.play().catch(()=>{}); }, {once:true,passive:true});
-})();
+});
+document.getElementById('copyUrl').onclick=async()=>{
+  const url=new URL(location.href);
+  url.searchParams.set('dx', String(Math.round(CONF.dx)));
+  url.searchParams.set('dy', String(Math.round(CONF.dy)));
+  url.searchParams.set('scale', String(+CONF.scale.toFixed(4)));
+  url.searchParams.set('rot', String(+CONF.rot.toFixed(2)));
+  try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch(e){ prompt('Copia la URL:', url.toString()); }
+};
 </script>
 </body>
 </html>
+
