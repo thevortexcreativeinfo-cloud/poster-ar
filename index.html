@@ -18,8 +18,6 @@
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
        padding:8px 10px;color:#cfe3ff;font:12px/1.35 system-ui;z-index:9;max-width:50ch;white-space:pre-wrap}
-  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
-  .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
 <body>
@@ -28,15 +26,6 @@
   <button id="btnAudio" class="btn" type="button" disabled>⏯ Audio</button>
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
-
-<div class="cal" id="cal" style="display:none">
-  <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
-  <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
-  <button data-a="sc-" class="btn">Scale−</button><button data-a="sc+" class="btn">Scale+</button>
-  <button data-a="rt-" class="btn">Rot−</button><button data-a="rt+" class="btn">Rot+</button>
-  <button id="copyUrl" class="btn">🔗 Copiar URL</button>
-  <span id="readout" class="chip"></span>
-</div>
 
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
@@ -53,7 +42,8 @@
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
 
-  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
+  <!-- El targetIndex final se fija por JS -->
+  <a-entity id="anchor"></a-entity>
 </a-scene>
 
 <script>
@@ -61,11 +51,8 @@
   const dbg = document.getElementById('dbg');
   const qs = new URLSearchParams(location.search);
   const DEBUG = qs.get('debug')==='1';
-  const wantCal = qs.get('cal')==='1';
-  if(wantCal) document.getElementById('cal').style.display='flex';
-
   const say = (m)=>{ dbg.textContent = m; console.log('[AR]', m); };
-  const append = (m)=>{ dbg.textContent += '\n' + m; console.log('[AR]', m); };
+  const append = (m)=>{ dbg.textContent += '\\n' + m; console.log('[AR]', m); };
 
   /* ============== 1) CARGA DEL JSON ============== */
   function cfgUrlFromQuery(){
@@ -89,25 +76,20 @@
     CFG = await r.json();
   }catch(e){
     append('❗ Error leyendo JSON: ' + (e.message||e));
-    alert('No pude leer el JSON de configuración.\nMira el cuadro de diagnóstico.');
+    alert('No pude leer el JSON de configuración. Revisa la URL/CORS.');
     return;
   }
-
-  // Validación mínima del esquema
-  const required = ['target','video','audio','slotVid','slotTitle','slotArtist','slotBar'];
-  const missing = required.filter(k => !(k in CFG));
-  if(missing.length){
-    append('❗ JSON incompleto. Faltan: ' + missing.join(', '));
-  } else {
-    append('CFG OK');
-  }
   if(DEBUG) append('CFG.preview: ' + JSON.stringify(CFG).slice(0,280) + (JSON.stringify(CFG).length>280?'…':''));
+
+  // Índice del target
+  const ti = qs.has('ti') ? +qs.get('ti') : (Number.isFinite(+CFG.targetIndex) ? +CFG.targetIndex : 0);
+  append('Usando targetIndex: ' + ti);
 
   /* ============== 2) COMPROBAR EL .MIND ============== */
   try{
     const r = await fetch(CFG.target, {mode:'cors', cache:'no-store'});
     append('.mind → HTTP ' + r.status + (r.ok?' OK':' ❗'));
-    if(!r.ok) append('Posible problema de CORS o URL incorrecta.');
+    if(!r.ok) append('Posible CORS o URL incorrecta.');
   }catch(e){
     append('❗ No pude descargar el .mind: ' + (e.message||e));
   }
@@ -130,12 +112,13 @@
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
   scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{} });
 
-  // Poner la cámara nativa en cover
+  // Cámara nativa en cover (cuando MindAR inyecte el <video>)
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
   const anchor = document.getElementById('anchor');
+  anchor.setAttribute('mindar-image-target', `targetIndex:${ti}`);
   const root = document.createElement('a-entity'); anchor.appendChild(root);
   root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
 
@@ -143,8 +126,6 @@
     root.setAttribute('position', `${(CAL.dx||0)/PW} ${-(CAL.dy||0)/PW} 0`);
     root.setAttribute('scale', `${CAL.scale||1} ${CAL.scale||1} 1`);
     root.setAttribute('rotation', `0 0 ${CAL.rot||0}`);
-    const rEl=document.getElementById('readout');
-    if(rEl) rEl.textContent=`dx:${Math.round(CAL.dx)} dy:${Math.round(CAL.dy)} scale:${(CAL.scale||1).toFixed(3)} rot:${(CAL.rot||0)}`;
   }
   applyCal();
 
@@ -203,13 +184,12 @@
     while(lo<=hi){ const mid=(lo+hi>>1); ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1; }
     return best;
   }
-  const titlePx = fitFont(CFG.title||'',  (SLOT_TITLE.w*Cw/PW),  (SLOT_TITLE.h*Ch/PH), 800);
-  const artistPx= fitFont(CFG.artist||'', (SLOT_ARTIST.w*Cw/PW), (SLOT_ARTIST.h*Ch/PH), 600);
+  const titlePx = fitFont(CFG.title||'',  (CFG.slotTitle.w*Cw/PW),  (CFG.slotTitle.h*Ch/PH), 800);
+  const artistPx= fitFont(CFG.artist||'', (CFG.slotArtist.w*Cw/PW), (CFG.slotArtist.h*Ch/PH), 600);
 
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   let audio=null, acx=null, analyser=null, dataArr=null, lastBeat=0;
-
   function setupAudioOnce(){
     if(audio) return;
     audio = new Audio(CFG.audio || '');
@@ -230,23 +210,23 @@
     ctx.clearRect(0,0,Cw,Ch);
 
     // Título
-    const tx = Math.round(SLOT_TITLE.x*Cw/PW), ty=Math.round(SLOT_TITLE.y*Ch/PH),
-          tw = Math.round(SLOT_TITLE.w*Cw/PW), th=Math.round(SLOT_TITLE.h*Ch/PH);
+    const tx = Math.round(CFG.slotTitle.x*Cw/PW), ty=Math.round(CFG.slotTitle.y*Ch/PH),
+          tw = Math.round(CFG.slotTitle.w*Cw/PW), th=Math.round(CFG.slotTitle.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(COLORS.title);     ctx.fillText(CFG.title||'', tx+tw/2,   ty+th/2);
 
     // Artista
-    const ax = Math.round(SLOT_ARTIST.x*Cw/PW), ay=Math.round(SLOT_ARTIST.y*Ch/PH),
-          aw = Math.round(SLOT_ARTIST.w*Cw/PW), ah=Math.round(SLOT_ARTIST.h*Ch/PH);
+    const ax = Math.round(CFG.slotArtist.x*Cw/PW), ay=Math.round(CFG.slotArtist.y*Ch/PH),
+          aw = Math.round(CFG.slotArtist.w*Cw/PW), ah=Math.round(CFG.slotArtist.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(COLORS.artist);    ctx.fillText(CFG.artist||'', ax+aw/2,   ay+ah/2);
 
     // Barra + tiempos
-    const pbx=Math.round(SLOT_BAR.x*Cw/PW), pby=Math.round(SLOT_BAR.y*Ch/PH),
-          pbw=Math.round(SLOT_BAR.w*Cw/PW), pbh=Math.max(2,Math.round(SLOT_BAR.h*Ch/PH));
+    const pbx=Math.round(CFG.slotBar.x*Cw/PW), pby=Math.round(CFG.slotBar.y*Ch/PH),
+          pbw=Math.round(CFG.slotBar.w*Cw/PW), pbh=Math.max(2,Math.round(CFG.slotBar.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000';             ctx.fillRect(pbx, pby,   pbw, pbh);
 
@@ -269,41 +249,29 @@
     const step=pbw/waveBars;
     const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
     let level=0;
-    const arr = (analyser? (analyser.getByteFrequencyData(dataArr), dataArr) : null);
+    if(analyser) analyser.getByteFrequencyData(dataArr);
 
     for(let pass=0; pass<2; pass++){
       const baseY = pass===0? byTop : byBot;
       const mirror = pass===1;
       for(let i=0;i<waveBars;i++){
         let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
-        const h = Math.max(4, Math.round(v* (Math.round(34*Cw/2048)) ));
+        if(analyser){ v = (dataArr[2+i]||0)/255; level+=v; }
+        const h = Math.max(4, Math.round(v*waveTopHeight));
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
         ctx.fillStyle = pass===0? COLORS.wave1 : COLORS.wave2;
         mirror ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
       }
     }
-    if(arr){ level/=waveBars; const now=performance.now(); if(level>0.52 && now-lastBeat>220){ lastBeat=now; burstParticles('#ffd54a', 8); } }
+    if(analyser){ level/=waveBars; }
 
     if(overlayP.__tex) overlayP.__tex.needsUpdate = true;
     requestAnimationFrame(drawOverlay);
   }
   requestAnimationFrame(drawOverlay);
 
-  function burstParticles(color='#13d77a', count=8){
-    for(let i=0;i<count;i++){
-      const p=document.createElement('a-circle');
-      p.setAttribute('radius', 0.006 + Math.random()*0.012);
-      p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
-      p.setAttribute('position', `${(Math.random()-0.5)*0.28} ${-H*0.18 + Math.random()*0.12} 0.18`);
-      const dy = 0.22 + Math.random()*0.25, dx = (Math.random()-0.5)*0.25, dur = 900 + Math.random()*600;
-      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.18+dy} 0.18; dur:${dur}; easing:easeOutQuad`);
-      p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
-      root.appendChild(p); setTimeout(()=>p.remove(), dur+80);
-    }
-  }
-
+  // Parallax opcional
   if(PARALLAX){
     (function parallaxTick(){
       if(scene?.camera){
@@ -319,7 +287,7 @@
   /* ============== 6) ESTADOS / BOTONES ============== */
   async function startAR(){
     try{
-      // Pedimos permisos de cámara antes (mejor para iOS)
+      // Pide permisos primero (iOS)
       try{
         const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
         s.getTracks().forEach(t=>t.stop());
@@ -371,46 +339,22 @@
   anchor.addEventListener('targetFound', async ()=>{
     root.emit('pop',null,false);
     document.getElementById('btnAudio').disabled=false;
-    say('✅ Target FOUND');
-    v1.play().catch(()=>{});
-
+    say('✅ Target FOUND (idx '+ti+')');
+    document.getElementById('v1').play().catch(()=>{});
     if(AUTOPLAY_ON_DETECT){
       setupAudioOnce();
       try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }catch{}
     }
   });
   anchor.addEventListener('targetLost', ()=>{
-    v1.pause(); if(audio) audio.pause();
+    document.getElementById('v1').pause(); if(audio) audio.pause();
     btnAudio.textContent='▶️ Audio';
     say('… Target LOST');
   });
 
-  // Calibración
-  if(wantCal){
-    document.querySelectorAll('#cal [data-a]').forEach(b=>{
-      b.onclick=()=>{
-        const s=6, sc=0.005, rt=0.2, a=b.dataset.a;
-        if(a==='dx-') CAL.dx-=s; if(a==='dx+') CAL.dx+=s;
-        if(a==='dy-') CAL.dy-=s; if(a==='dy+') CAL.dy+=s;
-        if(a==='sc-') CAL.scale=Math.max(0.9, CAL.scale-sc);
-        if(a==='sc+') CAL.scale=Math.min(1.3, CAL.scale+sc);
-        if(a==='rt-') CAL.rot-=rt; if(a==='rt+') CAL.rot+=rt;
-        applyCal();
-      };
-    });
-    document.getElementById('copyUrl').onclick=async()=>{
-      const url=new URL(location.href);
-      url.searchParams.set('dx', Math.round(CAL.dx||0));
-      url.searchParams.set('dy', Math.round(CAL.dy||0));
-      url.searchParams.set('scale', +(CAL.scale||1).toFixed(3));
-      url.searchParams.set('rot', +(CAL.rot||0).toFixed(1));
-      try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
-    };
-  }
-
   // Señales MindAR
   scene.addEventListener('arReady', ()=>append('Cámara OK'));
-  scene.addEventListener('arError',  e=>append('❗ arError: cámara/permisos'));
+  scene.addEventListener('arError',  ()=>append('❗ arError: cámara/permisos'));
 })();
 </script>
 </body>
