@@ -13,18 +13,15 @@
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* WebGL delante (interactivo) */
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-
   /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
        padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
   .dbg:hover{opacity:1}
-  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
-  .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
 <body>
@@ -34,16 +31,6 @@
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
-<!-- Controles de calibración (ocultos por defecto) -->
-<div class="cal" id="cal" style="display:none">
-  <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
-  <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
-  <button data-a="sc-" class="btn">Scale−</button><button data-a="sc+" class="btn">Scale+</button>
-  <button data-a="rt-" class="btn">Rot−</button><button data-a="rt+" class="btn">Rot+</button>
-  <button id="copyUrl" class="btn">🔗 Copiar URL</button>
-  <span id="readout" class="chip"></span>
-</div>
-
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
@@ -51,11 +38,10 @@
   mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
-  <a-assets timeout="60000" id="assets">
+  <a-assets timeout="60000">
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Cursor para poder hacer click/tap en elementos 3D -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -66,70 +52,74 @@
 <script>
 (async function(){
   const qs = new URLSearchParams(location.search);
-  const dbg = document.getElementById('dbg');
-  const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.9; setTimeout(()=>dbg.style.opacity=.16,1200); };
+  const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* ====== 1) Carga JSON de cliente ====== */
+  /* ===== Cargar JSON ===== */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
-  try{
-    const r = await fetch(cfgUrl, {mode:'cors', cache:'no-store'});
-    CFG = await r.json();
-  }catch(e){ alert('No pude cargar el JSON de cliente'); return; }
+  try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
+  catch{ alert('No pude cargar el JSON de cliente'); return; }
 
-  /* ====== 2) Preparar escena/target ====== */
-  const scene=document.getElementById('scene');
+  /* ===== Preparar escena MindAR ===== */
+  const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Cámara cover (cuando MindAR inyecta el <video> de la cámara)
+  // cámara en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
     }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
-  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
+  const PW = CFG.pw||2481, PH = CFG.ph||3508, H=PH/PW;
+  const px2 = (x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
-  const anchor=document.getElementById('anchor');
-  const root=document.createElement('a-entity'); anchor.appendChild(root);
-
-  // Entrada “cinemática”
-  root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:enter');
-
-  // Calibración
-  const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
+  const anchor = document.getElementById('anchor');
+  const root = document.createElement('a-entity'); anchor.appendChild(root);
+  const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
   function applyCal(){
-    root.setAttribute('position', `${(cal.dx||0)/PW} ${-(cal.dy||0)/PW} 0`);
-    root.setAttribute('scale', `${cal.scale||1} ${cal.scale||1} 1`);
-    root.setAttribute('rotation', `0 0 ${cal.rot||0}`);
-    const ro = document.getElementById('readout');
-    if(ro) ro.textContent = `dx:${Math.round(cal.dx||0)} dy:${Math.round(cal.dy||0)} scale:${(cal.scale||1).toFixed(3)} rot:${(cal.rot||0)}`;
+    root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
+    root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
+    root.setAttribute('rotation', `0 0 ${cal.rot}`);
   }
   applyCal();
 
-  /* ====== 3) “Papel” blanco opaco (no translúcido) ====== */
+  /* ===== Papel blanco (opaco) ===== */
   const paper = document.createElement('a-plane');
-  paper.setAttribute('width', 1);
-  paper.setAttribute('height', H);
-  paper.setAttribute('position','0 0 -0.005'); // detrás de todo
+  paper.setAttribute('width',1); paper.setAttribute('height',H);
+  paper.setAttribute('position','0 0 -0.01');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false; depthTest:false');
   root.appendChild(paper);
 
-  /* ====== 4) Vídeo (sin filtros, por delante del overlay) ====== */
-  const v1=document.getElementById('v1'); v1.src = CFG.video||'';
+  /* ===== Marco + Vídeo ===== */
+  const v1 = document.getElementById('v1'); v1.src = CFG.video||'';
   const vslot = CFG.slotVid;
-  const uVid = px2(vslot.x,vslot.y,vslot.w,vslot.h);
-  const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',uVid.wn);
-  vPlane.setAttribute('height',uVid.hn);
-  vPlane.setAttribute('position',`${uVid.cx} ${uVid.cy} 0.06`); // más cerca de cámara que el overlay
+  const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
+
+  // marco (doble borde) que SIEMPRE se ve
+  (function makeFrame(){
+    const outer = document.createElement('a-plane'); // sombra/borde exterior
+    outer.setAttribute('width', u.wn*1.04); outer.setAttribute('height', u.hn*1.04);
+    outer.setAttribute('position', `${u.cx} ${u.cy} 0.02`);
+    outer.setAttribute('material','shader:flat; color:#0b0b0b; opacity:0.95; side:double');
+    root.appendChild(outer);
+
+    const inner = document.createElement('a-plane'); // filete interior
+    inner.setAttribute('width', u.wn*1.00); inner.setAttribute('height', u.hn*1.00);
+    inner.setAttribute('position', `${u.cx} ${u.cy} 0.025`);
+    inner.setAttribute('material','shader:flat; color:#dfe9ef; opacity:1; side:double');
+    root.appendChild(inner);
+  })();
+
+  const vPlane=document.createElement('a-plane'); // vídeo (encima del marco)
+  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
   vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
   root.appendChild(vPlane);
 
-  function setCover(){
+  function coverVideo(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
     const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
     let rx=1,ry=1,ox=0,oy=0;
@@ -137,133 +127,109 @@
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true;
     vPlane.__base = {ox,oy,rx,ry,tex};
   }
-  vPlane.addEventListener('materialtextureloaded', setCover);
-  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
+  vPlane.addEventListener('materialtextureloaded', coverVideo);
+  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); coverVideo(); }, {once:true});
 
-  /* ====== 5) Overlay 2D (textos + barra) ====== */
+  /* ===== Canvas overlay (textos + barra) detrás del vídeo ===== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
 
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.0'); // detrás del vídeo
+  overlayP.setAttribute('position','0 0 0.0');  // detrás del vídeo
   overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
   root.appendChild(overlayP);
-  overlayP.addEventListener('loaded', ()=>{
-    const tex = new AFRAME.THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    const mesh = overlayP.getObject3D('mesh');
-    mesh.material.map = tex; mesh.material.needsUpdate = true;
-    overlayP.__tex = tex;
-  });
+  overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); const m=overlayP.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlayP.__tex=tex; });
 
-  const titleSlot = CFG.slotTitle, artistSlot = CFG.slotArtist, barSlot = CFG.slotBar;
-
+  const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
   function fitFontFor(text, wpx, hpx, weight){
     let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.74);
-    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1; }
+    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; if(ctx.measureText(text).width<=wpx*0.94){best=mid;lo=mid+1;}else hi=mid-1;}
     return best;
   }
-  const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
-  const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+  const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
+  const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ====== 6) Audio / Analyser ====== */
+  /* ===== Audio + UI ===== */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null, lastBeat=0;
-
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
-    try{
-      const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64;
-      const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
-    }catch(e){}
+    try{ const AC=window.AudioContext||window.webkitAudioContext; acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64; const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);}catch{}
+    audio.addEventListener('play',  ()=>btnAudio.textContent='⏸ Audio');
+    audio.addEventListener('pause', ()=>btnAudio.textContent='▶️ Audio');
   }
+  btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  btnAudio.onclick=async()=>{
-    setupAudio();
-    try{
-      if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
-      else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
-    }catch{}
-  };
-
-  /* ====== 7) Play/Pause táctil en el póster ====== */
+  /* ===== Play táctil en el póster ===== */
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
-    const playBtn = document.createElement('a-circle');
-    playBtn.classList.add('ui3d');
-    playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.09`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible (hit-area)
-    playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
-    root.appendChild(playBtn);
-    playBtn.addEventListener('click', async()=>{
-      setupAudio();
-      try{
-        if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
-        else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
-        playBtn.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);
-      }catch(e){}
-    });
+    const hit = document.createElement('a-circle');
+    hit.classList.add('ui3d');
+    hit.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
+    hit.setAttribute('position', `${pb.cx} ${pb.cy} 0.08`);
+    hit.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
+    hit.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
+    root.appendChild(hit);
+    hit.addEventListener('click', async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } hit.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);}catch{} });
 
-    // Aro 3D reactivo alrededor del play
-    const ring = document.createElement('a-torus');
+    // aro con brillo (no tapa el vídeo)
+    const ring=document.createElement('a-torus');
     ring.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.2);
     ring.setAttribute('radius-tubular', 0.004);
     ring.setAttribute('rotation','90 0 0');
-    ring.setAttribute('position', `${pb.cx} ${pb.cy} 0.085`);
-    ring.setAttribute('material','shader:standard; metalness:0; roughness:1; emissive:#13d77a; emissiveIntensity:0.0; color:#13d77a; transparent:true; opacity:.85');
+    ring.setAttribute('position', `${pb.cx} ${pb.cy} 0.075`);
+    ring.setAttribute('material','shader:standard; color:#13d77a; emissive:#13d77a; emissiveIntensity:0.25; roughness:1; metalness:0; transparent:true; opacity:.9');
     ring.setAttribute('animation__breath','property:scale; from:0.98 0.98 0.98; to:1.02 1.02 1.02; dur:1200; easing:easeInOutSine; dir:alternate; loop:true');
     root.appendChild(ring);
-    // guardamos para subir emissive con el beat
     overlayP.__ring = ring;
   }
 
-  /* ====== 8) Barras 3D audio-reactivas ====== */
-  const bars3D = [];
+  /* ===== Barras 3D (mejoradas) ===== */
+  const bars3D=[];
   (function makeBars3D(){
-    const n = 24;
-    const pbx = barSlot.x, pby = barSlot.y, pbw = barSlot.w, pbh = barSlot.h;
-    const boxWn = (pbw/PW)/n, cx = -0.5 + (pbx + pbw/2)/PW, cy = H/2 - (pby + pbh + (24/PW)*Cw/2048)/PW; // un poco por debajo de la barra
-    const depth = 0.01;
+    const n=24;
+    const pbx=barSlot.x, pby=barSlot.y, pbw=barSlot.w, pbh=barSlot.h;
+    const boxWn=(pbw/PW)/n, cx=-0.5+(pbx+pbw/2)/PW, cy=H/2-(pby+pbh+ (24/PW)*Cw/2048)/PW;
     for(let i=0;i<n;i++){
       const b=document.createElement('a-box');
       b.setAttribute('width', boxWn*0.8);
       b.setAttribute('height', 0.002);
-      b.setAttribute('depth', depth);
-      b.setAttribute('position', `${cx - (pbw/PW)/2 + (i+0.5)*boxWn} ${cy} 0.11`);
-      b.setAttribute('material','shader:standard; color:#13d77a; emissive:#13d77a; emissiveIntensity:0.25; roughness:1; metalness:0');
+      b.setAttribute('depth', 0.01);
+      b.setAttribute('position', `${cx - (pbw/PW)/2 + (i+0.5)*boxWn} ${cy} 0.05`);
+      // degradado “manual”: alterna dos colores
+      const col = (i%2)? (CFG.colors?.wave2 || '#ffd54a') : (CFG.colors?.wave1 || '#13d77a');
+      b.setAttribute('material', `shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.20; roughness:1; metalness:0`);
+      // idle breathing (aunque no haya música)
+      b.setAttribute('animation__idle', `property:scale; from:1 1 1; to:1 ${1+Math.random()*0.4} 1; dur:${900+Math.random()*600}; dir:alternate; loop:true; easing:easeInOutSine`);
       root.appendChild(b);
       bars3D.push(b);
     }
   })();
 
-  /* ====== 9) Dibujo del overlay (textos + barra 2D) ====== */
-  const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
+  /* ===== Overlay draw: textos + barra 2D ===== */
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
-
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título
-    const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
-          tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
+    // título
+    const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
+          tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
 
-    // Artista
-    const ax = Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
-          aw = Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
+    // artista
+    const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
+          aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra de progreso con degradado
+    // barra
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
@@ -277,63 +243,37 @@
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
-    // Knob + tiempos
+    // knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
-    const pulse=1+0.10*Math.sin(performance.now()/220); ctx.beginPath(); ctx.arc(kx,ky,r*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+    ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
     ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Señal al texture
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  /* ====== 10) Animación de barras 3D + ring con el beat ====== */
+  /* ===== Tick de audio para barras 3D y aro ===== */
   function audioTick(){
     if(!analyser){ requestAnimationFrame(audioTick); return; }
-    const data = new Uint8Array(analyser.frequencyBinCount);
+    const data=new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(data);
     let level=0;
     for(let i=0;i<bars3D.length;i++){
-      const v = (data[i+2]||0)/255;
-      level += v;
-      const h = 0.01 + v*0.08; // altura
+      const v=(data[i+2]||0)/255; level+=v;
+      const h=0.01+v*0.10;
       bars3D[i].setAttribute('scale', `1 ${h/0.002} 1`);
     }
-    level /= bars3D.length;
-    if(overlayP.__ring){
-      const ei = 0.15 + level*0.9;
-      overlayP.__ring.setAttribute('material', 'emissiveIntensity', ei);
-    }
+    level/=bars3D.length;
+    if(overlayP.__ring){ const ei = 0.15 + level*0.9; overlayP.__ring.setAttribute('material','emissiveIntensity', ei); }
     requestAnimationFrame(audioTick);
   }
   requestAnimationFrame(audioTick);
 
-  /* ====== 11) Marco que se “dibuja” al entrar ====== */
-  (function frameDraw(){
-    const pad = 0.02, thick=0.004;
-    const sides = [
-      {pos:`0 ${H/2-pad} 0.001`,  wh:`1 ${thick}`, axis:'x'}, // top
-      {pos:`${0.5-pad} 0 0.001`, wh:`${thick} ${H}`, axis:'y'}, // right
-      {pos:`0 ${-H/2+pad} 0.001`,wh:`1 ${thick}`, axis:'x'}, // bottom
-      {pos:`${-0.5+pad} 0 0.001`,wh:`${thick} ${H}`, axis:'y'}, // left
-    ];
-    sides.forEach((s,i)=>{
-      const p=document.createElement('a-plane');
-      p.setAttribute('position', s.pos);
-      const [w,h]=s.wh.split(' ');
-      p.setAttribute('width', w); p.setAttribute('height', h);
-      p.setAttribute('material','shader:flat; color:#000; transparent:true; opacity:.9; side:double; depthTest:false');
-      p.setAttribute('scale', s.axis==='x' ? '0 1 1' : '1 0 1');
-      p.setAttribute('animation__draw', `property:scale; to:1 1 1; dur:320; delay:${80*i}; easing:easeOutQuad; startEvents:enter`);
-      root.appendChild(p);
-    });
-  })();
-
-  /* ====== 12) Ken Burns suave ====== */
+  /* ===== Ken Burns suave ===== */
   function kenBurns(){
     const B=vPlane.__base; if(!B){ requestAnimationFrame(kenBurns); return; }
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -344,7 +284,7 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ====== 13) Parallax opcional ====== */
+  /* ===== Parallax opcional ===== */
   if(CFG.parallax){
     (function parallaxTick(){
       if(scene?.camera){
@@ -357,65 +297,48 @@
     })();
   }
 
-  /* ====== 14) Estados / UI ====== */
-  // Mostrar calibración si ?cal=1
-  document.getElementById('cal').style.display = (qs.get('cal')==='1' ? 'flex' : 'none');
-  document.querySelectorAll('#cal [data-a]').forEach(b=>{
-    b.onclick=()=>{
-      const s=6, sc=0.005, rt=0.2, a=b.dataset.a;
-      if(a==='dx-') cal.dx-=s; if(a==='dx+') cal.dx+=s;
-      if(a==='dy-') cal.dy-=s; if(a==='dy+') cal.dy+=s;
-      if(a==='sc-') cal.scale=Math.max(0.9, cal.scale-sc);
-      if(a==='sc+') cal.scale=Math.min(1.3, cal.scale+sc);
-      if(a==='rt-') cal.rot-=rt; if(a==='rt+') cal.rot+=rt;
-      applyCal();
-    };
-  });
-  document.getElementById('copyUrl').onclick=async()=>{
-    const url=new URL(location.href);
-    url.searchParams.set('dx', Math.round(cal.dx||0));
-    url.searchParams.set('dy', Math.round(cal.dy||0));
-    url.searchParams.set('scale', +(cal.scale||1).toFixed(3));
-    url.searchParams.set('rot', +(cal.rot||0).toFixed(1));
-    try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
-  };
+  /* ===== Debug de slots ===== */
+  if(qs.get('dbg')==='1'){
+    function rectWire(slot,z,color){
+      const b=document.createElement('a-plane');
+      const u=px2(slot.x,slot.y,slot.w,slot.h);
+      b.setAttribute('width',u.wn); b.setAttribute('height',u.hn); b.setAttribute('position',`${u.cx} ${u.cy} ${z}`);
+      b.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:.15; side:double`);
+      root.appendChild(b);
+    }
+    rectWire(CFG.slotVid,   0.035, '#00e5ff');
+    rectWire(CFG.slotTitle, 0.001, '#00ff88');
+    rectWire(CFG.slotArtist,0.001, '#00ff88');
+    rectWire(CFG.slotBar,   0.001, '#ffaa00');
+    if(CFG.slotPlay) rectWire(CFG.slotPlay,0.085,'#ff4081');
+    log('DBG: slots pintados');
+  }
 
-  // Arranque robusto (pide permiso primero)
+  /* ===== Estados / UI ===== */
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled = true;
-      say('Pidiendo cámara…');
-      const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+      btnStart.disabled=true; log('Pidiendo cámara…');
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
-      say('Permisos OK. Iniciando MindAR…');
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       btnStart.textContent='Cámara lista';
-    }catch(e){
-      say('No se pudo iniciar cámara'); btnStart.disabled=false;
-    }
+    }catch(e){ btnStart.disabled=false; log('No se pudo iniciar cámara'); }
   };
 
   anchor.addEventListener('targetFound', ()=>{
-    root.emit('enter',null,false);
-    v1.play().catch(()=>{});
-    btnAudio.disabled=false;
-    // Si quieres auto-audio al detectar y el usuario ya tocó “Abrir cámara”:
-    if(CFG.autoplay){
-      setupAudio();
-      audio.play().then(()=>{ btnAudio.textContent='⏸ Audio'; }).catch(()=>{});
-    }
-    say('Target FOUND');
+    v1.play().catch(()=>{}); document.getElementById('btnAudio').disabled=false; log('Target FOUND');
+    if(CFG.autoplay){ setupAudio(); audio.play().catch(()=>{}); }
   });
   anchor.addEventListener('targetLost',  ()=>{
-    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio';
-    say('Target LOST…');
+    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // Primera interacción automática para iOS/Android (mejor UX)
+  // primer toque automático (mejor para iOS)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
+
