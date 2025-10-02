@@ -4,22 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MindAR · Test de detección</title>
-
-<!-- A-Frame + MindAR -->
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* El vídeo de la cámara debe ocupar toda la pantalla y quedar detrás */
   video[playsinline]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* El lienzo WebGL encima (para ver los planos verdes) */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important}
-
   .ui{position:fixed;left:10px;top:10px;z-index:9;display:flex;gap:8px}
   .btn{padding:8px 12px;border-radius:8px;border:1px solid #345;background:#0f1522;color:#eaf2ff}
   .log{position:fixed;right:10px;top:10px;z-index:9;color:#cfe3ff;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;max-width:46ch}
@@ -42,7 +36,11 @@
 (function(){
   const qs = new URLSearchParams(location.search);
   const t = qs.get('t') || '';
-  const n = Math.max(1, +(qs.get('n')||8));
+  const n = Math.max(1, +(qs.get('n')||12));
+  const warm = qs.get('warmup') ?? '2';
+  const cf   = qs.get('cf') ?? '0.0001';
+  const beta = qs.get('beta') ?? '0.001';
+
   const logEl = document.getElementById('log');
   const btnStart = document.getElementById('btnStart');
   const scene = document.getElementById('scene');
@@ -50,12 +48,9 @@
 
   function say(m){ logEl.textContent = m; console.log('[TEST]', m); }
 
-  if(!t){
-    say('❗ Falta parámetro ?t=URL_DEL_MIND');
-    return;
-  }
+  if(!t){ say('❗ Falta ?t=URL_DEL_MIND'); return; }
 
-  // Asegura que el vídeo de la cámara (creado por MindAR) tenga estilo cover
+  // Estilo cover del vídeo de la cámara
   new MutationObserver(()=>{
     document.querySelectorAll('video').forEach(v=>{
       if(v.srcObject instanceof MediaStream){
@@ -67,13 +62,12 @@
     });
   }).observe(document.documentElement,{subtree:true,childList:true});
 
-  // Crea anchors 0..n-1 con un plano verde visible al detectar
+  // Anchors 0..n-1 con plano verde
   for(let i=0;i<n;i++){
     const a=document.createElement('a-entity');
     a.setAttribute('mindar-image-target', `targetIndex:${i}`);
     const p=document.createElement('a-plane');
-    p.setAttribute('width',0.6);
-    p.setAttribute('height',0.4);
+    p.setAttribute('width',0.6); p.setAttribute('height',0.4);
     p.setAttribute('material','color:#00ff88; opacity:.45; side:double');
     a.appendChild(p);
     anchorsHolder.appendChild(a);
@@ -81,15 +75,16 @@
     a.addEventListener('targetLost',  ()=>say('…lost idx '+i));
   }
 
-  // Configura la escena con el target indicado
-  scene.setAttribute('mindar-image', `autoStart:false; imageTargetSrc:${t}; uiLoading: yes; maxTrack:1;`);
+  // Configurar MindAR con parámetros “relajados”
+  scene.setAttribute(
+    'mindar-image',
+    `autoStart:false; imageTargetSrc:${t}; uiLoading: yes; maxTrack:1; warmupTolerance:${warm}; filterMinCF:${cf}; filterBeta:${beta};`
+  );
 
-  // Eventos útiles
   scene.addEventListener('arReady', ()=>say('AR listo (permisos OK)'));
   scene.addEventListener('arError', (e)=>say('❗ Error AR/cámara: '+(e?.detail||'')));
 
   async function ensurePermission(){
-    // Pedir permiso explícito (iOS/Android) antes de iniciar MindAR, y soltarlo
     try{
       const s = await navigator.mediaDevices.getUserMedia({
         video:{facingMode:{ideal:'environment'}}, audio:false
@@ -97,7 +92,7 @@
       s.getTracks().forEach(t=>t.stop());
       return true;
     }catch(err){
-      say('❗ No se pudo obtener permiso de cámara: '+(err?.name||err));
+      say('❗ Permiso cámara denegado: '+(err?.name||err));
       return false;
     }
   }
@@ -113,32 +108,28 @@
   async function start(){
     btnStart.disabled = true;
     say('Comprobando .mind…');
-    // Verifica que el .mind se descarga (CORS + 200)
     try{
       const r = await fetch(t, {mode:'cors', cache:'no-store'});
       if(!r.ok) throw new Error('HTTP '+r.status);
       say('OK .mind ('+r.status+')');
     }catch(e){
       say('❗ No pude descargar el .mind: '+(e.message||e));
-      btnStart.disabled = false;
+      btnStart.disabled=false;
       return;
     }
 
-    // Intento directo de iniciar MindAR
     try{
       say('Iniciando AR…');
       await startMindAR();
       say('Cámara lista. Apunta al póster.');
-      return;
     }catch(e1){
-      say('Solicitando permisos de cámara…');
+      say('Pidiendo permisos de cámara…');
       const ok = await ensurePermission();
       if(!ok){ btnStart.disabled=false; return; }
       try{
-        say('Iniciando AR tras permisos…');
+        say('Iniciando AR…');
         await startMindAR();
         say('Cámara lista. Apunta al póster.');
-        return;
       }catch(e2){
         say('❗ No se pudo iniciar MindAR: '+(e2?.name||e2));
         btnStart.disabled=false;
@@ -147,7 +138,6 @@
   }
 
   btnStart.addEventListener('click', start, {passive:true});
-  // Primer toque auto (mejora UX)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true, passive:true});
 })();
 </script>
