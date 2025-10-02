@@ -17,16 +17,11 @@
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
 
-  /* UI SIEMPRE ARRIBA */
-  .ui{
-    position:fixed;left:8px;top:8px;display:flex;gap:8px;
-    z-index:9999; pointer-events:auto;
-  }
+  /* UI arriba del todo */
+  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9999;pointer-events:auto}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:10px 12px}
-  .dbg{
-    position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-    padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9998;pointer-events:none;opacity:.2;transition:opacity .35s
-  }
+  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9998;pointer-events:none;opacity:.25;transition:opacity .35s}
   .dbg:hover{opacity:1}
   .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9999}
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
@@ -39,6 +34,7 @@
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
+<!-- Calibración (oculta salvo ?cal=1) -->
 <div class="cal" id="cal" style="display:none">
   <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
   <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
@@ -59,6 +55,7 @@
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
+  <!-- Cursor para poder clickar elementos 3D si los usas -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -69,10 +66,10 @@
 <script>
 (async function(){
   const dbg = document.getElementById('dbg');
-  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.9; setTimeout(()=>dbg.style.opacity=.2,1200); };
+  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.95; setTimeout(()=>dbg.style.opacity=.25,1200); };
   const qs = new URLSearchParams(location.search);
 
-  /* ===== CARGA CFG (client o cfg) ===== */
+  /* =============== CONFIG (client o cfg) =============== */
   function cfgUrlFromQuery(){
     const cfg = qs.get('cfg');
     if (cfg) return cfg;
@@ -94,7 +91,7 @@
     log('CFG OK');
   }catch(e){ log('❗ No pude cargar el cfg: '+(e.message||e)); alert('No pude cargar el cfg: '+(e.message||e)); return; }
 
-  // Defaults
+  // Defaults básicos
   CFG.pw ??= 2481; CFG.ph ??= 3508;
   CFG.colors ??= { title:'#000000', artist:'#000000', wave1:'#13d77a', wave2:'#ffd54a' };
   CFG.slotVid    ??= {x:296,y:316,w:1890,h:1682};
@@ -102,13 +99,14 @@
   CFG.slotArtist ??= {x:200,y:2330,w:2080,h:160};
   CFG.slotBar    ??= {x:300,y:2640,w:2060,h:26};
   CFG.cal ??= {dx:0,dy:0,scale:1,rot:0};
-  CFG.autoplayOnFound = !!CFG.autoplayOnFound;
   CFG.parallax = !!CFG.parallax;
+  CFG.autoplayOnFound = !!CFG.autoplayOnFound; // si quieres que arranque audio al detectar
 
-  /* ===== A-FRAME / MINDAR ===== */
+  /* =============== A-FRAME / MINDAR =============== */
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
+  // Cámara en cover detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
@@ -128,22 +126,63 @@
   }
   applyCal();
 
-  // Vignette sutil
-  const vignette=document.createElement('a-plane');
-  vignette.setAttribute('width', 1.14);
-  vignette.setAttribute('height', H*1.14);
-  vignette.setAttribute('position','0 0 -0.03');
-  vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
-  root.appendChild(vignette);
+  /* ======= Cartela blanca (fondo sólido) + sombra ======= */
+  // Fondo de la tarjeta (BLANCO sólido, nada translúcido)
+  const card=document.createElement('a-plane');
+  card.setAttribute('width', 1);
+  card.setAttribute('height', H);
+  card.setAttribute('position','0 0 0.00');
+  card.setAttribute('material','shader:flat; color:#FFFFFF; side:double; depthTest:true; transparent:false');
+  root.appendChild(card);
 
-  /* ===== VÍDEO ===== */
+  // Sombra suave inferior para “flotar”
+  const shadow=document.createElement('a-plane');
+  shadow.setAttribute('width', 0.86);
+  shadow.setAttribute('height', H*0.05);
+  shadow.setAttribute('position', `0 ${-H*0.48} -0.01`);
+  shadow.setAttribute('rotation','-8 0 0');
+  shadow.setAttribute('material','shader:flat; color:#000; opacity:.16; transparent:true; side:double; depthTest:false');
+  root.appendChild(shadow);
+
+  /* ======= Marco 3D (bisel) + “light sweep” ======= */
+  // Marco fino negro (borde)
+  const border = document.createElement('a-plane');
+  border.setAttribute('width', 1.004); border.setAttribute('height', H*1.004);
+  border.setAttribute('position', '0 0 0.005');
+  border.setAttribute('material','shader:flat; color:#000; side:double; transparent:true; opacity:.08');
+  root.appendChild(border);
+  // Cuatro tiras simulando bisel (claras arriba/izq, oscuras abajo/der)
+  const bevel = [
+    {x:0,y:H/2+0.002,w:1,h:0.006,color:'#ffffff',op:.25},
+    {x:-0.5-0.002,y:0,w:0.006,h:H,color:'#ffffff',op:.22},
+    {x:0,y:-H/2-0.002,w:1,h:0.006,color:'#000000',op:.10},
+    {x:0.5+0.002,y:0,w:0.006,h:H,color:'#000000',op:.10},
+  ];
+  bevel.forEach(b=>{
+    const p=document.createElement('a-plane');
+    p.setAttribute('width', b.w); p.setAttribute('height', b.h);
+    p.setAttribute('position', `${b.x} ${b.y} 0.006`);
+    p.setAttribute('material',`shader:flat; color:${b.color}; opacity:${b.op}; transparent:true; side:double`);
+    root.appendChild(p);
+  });
+  // Light sweep alrededor (va rotando)
+  const sweep=document.createElement('a-plane');
+  sweep.setAttribute('width',1.02); sweep.setAttribute('height',H*1.02);
+  sweep.setAttribute('position','0 0 0.007');
+  sweep.setAttribute('material','shader:flat; color:#fff; opacity:0; transparent:true; side:double');
+  sweep.setAttribute('animation__blink','property:material.opacity; from:0; to:.18; dir:alternate; dur:380; loop:1; startEvents:go');
+  root.appendChild(sweep);
+  function triggerSweep(){ sweep.emit('go',null,false); setTimeout(triggerSweep, 3500+Math.random()*1500); }
+  setTimeout(triggerSweep, 2000);
+
+  /* ======= VÍDEO (limpio, sin oscurecer) ======= */
   const v1=document.getElementById('v1'); v1.src = CFG.video || '';
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.10`); /* delante de la cartela */
+  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; transparent:false; opacity:1');
   root.appendChild(vPlane);
 
   function setCover(){
@@ -157,7 +196,7 @@
   vPlane.addEventListener('materialtextureloaded', setCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  // Ken Burns
+  // Ken Burns sutil
   function kenBurns(){
     const B=vPlane.__base; if(!B) return;
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -168,14 +207,14 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ===== OVERLAY EN CANVAS (títulos + barra + waveform) ===== */
+  /* ======= OVERLAY CANVAS (textos + barra + waveform) ======= */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.02');
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  overlayP.setAttribute('position','0 0 0.12'); /* por encima del vídeo, pero sólo textos (transparente) */
+  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:true; opacity:1');
   root.appendChild(overlayP);
   overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate = true; const mesh = overlayP.getObject3D('mesh'); mesh.material.map = tex; mesh.material.needsUpdate = true; overlayP.__tex = tex; });
 
@@ -189,20 +228,20 @@
   const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ===== AUDIO ===== */
+  /* ======= AUDIO + WAVEFORM MEJORADO ======= */
   const btnStart = document.getElementById('btnStart');
   const btnAudio = document.getElementById('btnAudio');
 
   let audio=null, acx=null, analyser=null, freqArr=null, userGesture=false, targetVisible=false, wantPlay=false, lastBeat=0;
-  const bars = CFG.waveBars || 48;
+  const bars = CFG.waveBars || 56;  // más barras
+  const barSmooth = new Array(bars).fill(0); // suavizado
 
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC();
-      analyser=acx.createAnalyser();
+      acx=new AC(); analyser=acx.createAnalyser();
       analyser.fftSize=128; freqArr=new Uint8Array(analyser.frequencyBinCount);
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
@@ -222,7 +261,7 @@
     }
   }
 
-  // Botón UI Audio (usa click + touchend y corta propagación)
+  // Botón Audio (click + touch)
   const onAudioToggle = (e)=>{
     e.preventDefault(); e.stopPropagation();
     userGesture=true; setupAudio();
@@ -232,14 +271,14 @@
   btnAudio.addEventListener('click', onAudioToggle, {passive:false});
   btnAudio.addEventListener('touchend', onAudioToggle, {passive:false});
 
-  // Botón AR (opcional si hay slotPlay)
+  // Área AR play/pause opcional si tu JSON trae slotPlay (si no, se omite)
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const playBtn = document.createElement('a-circle');
     playBtn.classList.add('ui3d');
     playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
+    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.13`);
+    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible: sólo hit
     playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
     root.appendChild(playBtn);
     playBtn.addEventListener('click', (e)=>{
@@ -250,9 +289,17 @@
     });
   }
 
-  // Dibujo overlay
-  const waveTopHeight = Math.round(36*Cw/2048), waveGap = Math.round(26*Cw/2048);
+  /* ======= DIBUJO (textos + barra + waveform) ======= */
+  const waveTopHeight = Math.round(40*Cw/2048), waveGap = Math.round(28*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
+  function roundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+  }
 
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
@@ -275,19 +322,20 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra
+    // Barra (con bordes redondeados)
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
-          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
-    ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
-    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(4,Math.round(barSlot.h*Ch/PH));
+    ctx.fillStyle='rgba(0,0,0,0.14)';
+    roundedRect(pbx, pby+2, pbw, pbh, Math.round(pbh/2)); ctx.fill();
+    ctx.fillStyle='#000';
+    roundedRect(pbx, pby, pbw, pbh, Math.round(pbh/2)); ctx.fill();
 
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
     const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
-    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
-    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
-    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
+    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a')); grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+    ctx.fillStyle=grad; roundedRect(pbx, pby, fw, pbh, Math.round(pbh/2)); ctx.fill();
 
     // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
@@ -297,49 +345,65 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble
-    const step=pbw/(bars||48);
+    // Waveform doble con suavizado (attack/decay) y gradiente por barra
     const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
     let level=0, arr=null;
     if(analyser && (arr=freqArr)) analyser.getByteFrequencyData(arr);
 
-    ctx.save();
-    for(let pass=0; pass<2; pass++){
-      const baseY = (pass===0? byTop : byBot);
-      const mirror = (pass===1);
-      for(let i=0;i<(bars||48);i++){
-        let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
-        const h = Math.max(4, Math.round(v*Math.round(36*Cw/2048)));
-        const x = Math.round(pbx + i*step + step*0.18);
-        const w = Math.max(2, Math.round(step*0.64));
-        ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
-        mirror ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
-      }
+    const nBars = bars;
+    const step = pbw / nBars;
+    for(let i=0;i<nBars;i++){
+      // valor fuente
+      let raw = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
+      if(arr){ raw = (arr[2+i]||0)/255; }
+      // suavizado: attack rápido, decay lento
+      const prev = barSmooth[i];
+      const target = raw;
+      const atk = 0.55, dec = 0.12;
+      const val = (target>prev) ? (prev*(1-atk)+target*atk) : (prev*(1-dec)+target*dec);
+      barSmooth[i] = val;
+      level += val;
+
+      const h = Math.max(4, Math.round(val*waveTopHeight));
+      const x = Math.round(pbx + i*step + step*0.18);
+      const w = Math.max(3, Math.round(step*0.64));
+
+      // gradiente vertical por barra
+      const gTop = ctx.createLinearGradient(0, byTop-h, 0, byTop);
+      gTop.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
+      gTop.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+      const gBot = ctx.createLinearGradient(0, byBot, 0, byBot+h);
+      gBot.addColorStop(0, (CFG.colors?.wave2||'#ffd54a'));
+      gBot.addColorStop(1, (CFG.colors?.wave1||'#13d77a'));
+
+      // superior
+      ctx.fillStyle=gTop; ctx.fillRect(x, byTop-h, w, h);
+      // inferior (espejo)
+      ctx.fillStyle=gBot; ctx.fillRect(x, byBot, w, h);
     }
-    ctx.restore();
-    if(arr){ level/=(bars||48); const now=performance.now(); if(level>0.52 && now-lastBeat>200){ lastBeat=now; burstParticles('#ffd54a', 8); } }
+    if(arr){ level/=nBars; const now=performance.now(); if(level>0.52 && now-lastBeat>220){ lastBeat=now; burstParticles('#ffd54a', 8); } }
 
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  // Partículas
+  /* ======= Partículas (por detrás del vídeo) ======= */
   function burstParticles(color='#13d77a', count=8){
     for(let i=0;i<count;i++){
       const p=document.createElement('a-circle');
       p.setAttribute('radius', 0.006 + Math.random()*0.012);
       p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
-      p.setAttribute('position', `${(Math.random()-0.5)*0.28} ${-H*0.18 + Math.random()*0.12} 0.18`);
-      const dy = 0.22 + Math.random()*0.25, dx = (Math.random()-0.5)*0.25, dur = 900 + Math.random()*600;
-      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.18+dy} 0.18; dur:${dur}; easing:easeOutQuad`);
+      // IMPORTANTE: Z por detrás del vídeo (vídeo en 0.10 -> partículas en 0.04)
+      p.setAttribute('position', `${(Math.random()-0.5)*0.28} ${-H*0.18 + Math.random()*0.12} 0.04`);
+      const dy = 0.22 + Math.random()*0.25, dx = (Math.random()-0.5)*0.25, dur = 900 + Math.random()*700;
+      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.18+dy} 0.04; dur:${dur}; easing:easeOutQuad`);
       p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
       root.appendChild(p); setTimeout(()=>p.remove(), dur+80);
     }
   }
 
-  /* ===== PARALLAX (opcional) ===== */
+  /* ======= Parallax suave (opcional) ======= */
   if(CFG.parallax){
     (function parallaxTick(){
       if(scene?.camera){
@@ -352,11 +416,10 @@
     })();
   }
 
-  /* ===== ESTADOS / UI ===== */
-  // Mostrar calibración si ?cal=1
+  /* =============== ESTADOS / UI =============== */
+  // Calibración visible con ?cal=1
   const calBox = document.getElementById('cal');
   calBox.style.display = (qs.get('cal')==='1' ? 'flex' : 'none');
-
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
       const s=6, sc=0.005, rt=0.2, a=b.dataset.a, c=CFG.cal;
@@ -399,8 +462,7 @@
   btnStart.addEventListener('touchend', onStartTap, {passive:false});
 
   anchor.addEventListener('targetFound', ()=>{
-    targetVisible=true;
-    root.emit('pop',null,false);
+    targetVisible=true; root.emit('pop',null,false);
     v1.play().catch(()=>{});
     if(CFG.autoplayOnFound){ setupAudio(); wantPlay = true; }
     updateAudioPlayback();
@@ -416,7 +478,7 @@
   scene.addEventListener('arReady', ()=>log('Cámara OK'));
   scene.addEventListener('arError',  ()=>log('Error cámara/permisos'));
 
-  // Seguridad: si el usuario toca en cualquier parte, intenta arrancar
+  // Seguridad: primer toque intenta abrir la cámara
   window.addEventListener('pointerup', (e)=>{ if(!btnStart.disabled) onStartTap(e); }, {once:true,passive:false});
 })();
 </script>
