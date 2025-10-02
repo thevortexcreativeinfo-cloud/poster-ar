@@ -34,7 +34,7 @@
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
-<!-- Controles de calibración (ocultos por defecto, muestra con ?cal=1) -->
+<!-- Calibración (muestra con ?cal=1) -->
 <div class="cal" id="cal" style="display:none">
   <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
   <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
@@ -52,10 +52,11 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- Ponemos src vacío; luego se setea por JS con setAttribute para evitar el warning -->
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" src=""></video>
   </a-assets>
 
-  <!-- Cursor para hacer click en elementos 3D -->
+  <!-- Cursor para click/tap en 3D -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -69,7 +70,7 @@
   const dbg = document.getElementById('dbg');
   const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
 
-  /* ================= DEFAULTS de seguridad ================= */
+  /* ===== DEFAULTS seguros ===== */
   const DEFAULTS = {
     target: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759401459/targets_12_j14r8e.mind',
     video:  'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
@@ -87,33 +88,27 @@
     autoplay:true, parallax:false, showCal:false
   };
 
-  /* ================= Carga CFG (con fallback) ================= */
+  /* ===== Carga cfg (fallback a DEFAULTS si falla) ===== */
   async function loadCfg(){
     let cfg = {...DEFAULTS};
     const cfgUrl = qs.get('cfg');
-    if(!cfgUrl){
-      say('Modo DEMO: sin ?cfg= — usando DEFAULTS');
-      return cfg;
-    }
+    if(!cfgUrl){ say('Modo DEMO (sin ?cfg=)'); return cfg; }
     try{
       const r = await fetch(cfgUrl, {mode:'cors', cache:'no-store'});
       if(!r.ok) throw new Error('HTTP '+r.status);
       const json = await r.json();
-      // Mezcla profunda mínima
       cfg = {...cfg, ...json, colors:{...cfg.colors, ...(json.colors||{})}};
-      say('CFG cargado OK');
-    }catch(e){
-      say('⚠️ No pude cargar el cfg, uso DEFAULTS');
-    }
+      say('CFG cargado');
+    }catch(e){ say('⚠️ No pude cargar cfg, uso DEFAULTS'); }
     return cfg;
   }
   const CFG = await loadCfg();
 
-  /* ================= A-Frame / MindAR ================= */
+  /* ===== A-Frame / MindAR ===== */
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Cámara en cover (vídeo del stream)
+  // Stream cover detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -145,8 +140,10 @@
   vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
   root.appendChild(vignette);
 
-  /* ================= VÍDEO ================= */
-  const v1=document.getElementById('v1'); v1.src = CFG.video||'';
+  /* ===== VÍDEO ===== */
+  const v1=document.getElementById('v1');
+  // Asigna src como atributo (reduce el warning de a-assets)
+  v1.setAttribute('src', CFG.video || '');
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const vPlane=document.createElement('a-plane');
@@ -166,7 +163,7 @@
   vPlane.addEventListener('materialtextureloaded', setCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  /* ================= CANVAS OVERLAY (títulos + barra/wave) ================= */
+  /* ===== CANVAS OVERLAY ===== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
@@ -186,20 +183,21 @@
   const titleSlot = CFG.slotTitle, artistSlot = CFG.slotArtist, barSlot = CFG.slotBar;
   function fitFontFor(text, wpx, hpx, weight){
     let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.74);
-    while(lo<=hi){ const mid=(lo+hi>>1);
+    while(lo<=hi){
+      const mid=(lo+hi>>1);
       ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
       if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1;
     }
     return best;
   }
-  const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW,   titleSlot.h*Ch/PH, 800);
-  const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+  const titlePx = fitFontFor(CFG.title||'',  titleSlot.w*Cw/PW,   titleSlot.h*Ch/PH, 800);
+  const artistPx= fitFontFor(CFG.artist||'', artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ================= AUDIO / UI ================= */
-  const btnStart=document.getElementById('btnStart');
-  const btnAudio=document.getElementById('btnAudio');
+  /* ===== AUDIO / UI ===== */
+  const btnStart = document.getElementById('btnStart');
+  const btnAudio = document.getElementById('btnAudio');
+
   let audio=null, acx=null, analyser=null, lastBeat=0;
-  const bars=48;
 
   function setupAudio(){
     if(audio) return;
@@ -209,7 +207,7 @@
       acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize = 64;
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
-    }catch(e){ /* sin WebAudio también funciona */ }
+    }catch(e){}
   }
 
   btnAudio.onclick = async () => {
@@ -224,11 +222,11 @@
         btnAudio.textContent='▶️ Audio';
       }
     }catch(e){
-      say('⚠️ No se pudo reproducir audio (se necesita gesto de usuario)');
+      say('⚠️ Necesita un gesto del usuario para reproducir');
     }
   };
 
-  // Área de play/pause 3D (opcional, invisible)
+  // Área 3D play/pause invisible (si viene en cfg)
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const playBtn = document.createElement('a-circle');
@@ -248,7 +246,7 @@
     });
   }
 
-  /* ================= DIBUJO (textos + barra + waveform) ================= */
+  /* ===== DIBUJO textos + barra + waveform ===== */
   const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
@@ -294,20 +292,19 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble (si hay analyser, real; si no, animación fake)
+    // Waveform doble
     let arr = null;
     if(analyser){ arr = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); }
-    const bars = CFG.waveBars || 48;
-    const step=pbw/bars, byTop = pby - waveGap, byBot = pby + pbh + waveGap;
-    let level=0;
+    const nBars = CFG.waveBars || 48;
+    const step=pbw/nBars, byTop = pby - waveGap, byBot = pby + pbh + waveGap;
     ctx.save();
     for(let pass=0; pass<2; pass++){
       const baseY = (pass===0? byTop : byBot);
       const mirror = (pass===1);
-      for(let i=0;i<bars;i++){
+      for(let i=0;i<nBars;i++){
         let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
-        const h = Math.max(4, Math.round(v*Math.round(34*Cw/2048)));
+        if(arr){ v = (arr[2+i]||0)/255; }
+        const h = Math.max(4, Math.round(v*waveTopHeight));
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
         ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
@@ -315,14 +312,13 @@
       }
     }
     ctx.restore();
-    if(arr){ level/=bars; const now=performance.now(); if(level>0.52 && now-lastBeat>200){ lastBeat=now; /* aquí podrías lanzar partículas si quieres */ } }
 
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  // Micro Ken-Burns en el vídeo
+  // Ken-Burns suave
   function kenBurns(){
     const B=vPlane.__base; if(!B) return;
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -346,8 +342,8 @@
     })();
   }
 
-  /* ================= Estados / UI ================= */
-  // Mostrar calibración si ?cal=1
+  /* ===== Estados / UI ===== */
+  // Calibración con ?cal=1
   document.getElementById('cal').style.display = (qs.get('cal')==='1' ? 'block' : 'none');
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
@@ -369,42 +365,31 @@
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
-  const btnStart=document.getElementById('btnStart');
-  btnStart.onclick=async()=>{
+  const startAR = async () => {
     try{
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       btnStart.disabled=true; btnStart.textContent='Cámara lista';
-      // habilita el botón de audio ya aquí (además de en targetFound)
-      document.getElementById('btnAudio').disabled=false;
-      // Autoplay tras gesto del usuario
+      // habilita audio ya aquí
+      btnAudio.disabled=false;
       if(CFG.autoplay){
         setupAudio();
         try{
           if(acx && acx.state==='suspended') await acx.resume();
           await audio.play();
-          document.getElementById('btnAudio').textContent='⏸ Audio';
-        }catch(e){ say('Autoplay bloqueado; toca ⏯ Audio'); }
+          btnAudio.textContent='⏸ Audio';
+        }catch(e){ say('Autoplay bloqueado; usa ⏯ Audio'); }
       }
       say('Cámara iniciada');
-    }catch{
-      say('No se pudo iniciar cámara');
-    }
+    }catch{ say('No se pudo iniciar cámara'); }
   };
 
-  anchor.addEventListener('targetFound', ()=>{
-    root.emit('pop',null,false);
-    v1.play().catch(()=>{});
-    document.getElementById('btnAudio').disabled=false;
-    say('Target FOUND');
-  });
-  anchor.addEventListener('targetLost',  ()=>{
-    v1.pause(); audio?.pause();
-    document.getElementById('btnAudio').textContent='▶️ Audio';
-    say('Target LOST…');
-  });
+  btnStart.onclick = startAR;
 
-  // Gesto global de seguridad (iOS): primer tap → iniciar cámara
+  anchor.addEventListener('targetFound', ()=>{ root.emit('pop',null,false); v1.play().catch(()=>{}); btnAudio.disabled=false; say('Target FOUND'); });
+  anchor.addEventListener('targetLost',  ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; say('Target LOST…'); });
+
+  // iOS: primer tap → iniciar cámara
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
