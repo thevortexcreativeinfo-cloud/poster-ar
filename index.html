@@ -8,12 +8,17 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* Cámara del móvil detrás (fullscreen cover) */
+  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
-  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
+  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
   .dbg:hover{opacity:1}
 </style>
 </head>
@@ -22,7 +27,7 @@
   <button id="btnStart" class="btn" type="button">📷 Abrir cámara</button>
   <button id="btnAudio" class="btn" type="button" disabled>▶️ Audio</button>
 </div>
-<div id="dbg" class="dbg">Cargando…</div>
+<div id="dbg" class="dbg">Listo…</div>
 
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
@@ -36,7 +41,7 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity id="cursor" cursor="rayOrigin: mouse" raycaster="objects: .note; far: 3"></a-entity>
+    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -44,12 +49,10 @@
 
 <script>
 (async function(){
-  const ENABLE_NOTES = true; // pon a false si no quieres notas con física
-
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* helpers */
+  /* ---------- Helpers ---------- */
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -61,16 +64,17 @@
 
   /* ---------- Cargar JSON ---------- */
   const cfgUrl = qs.get('cfg');
-  if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
+  if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
-  catch(e){ alert('No pude cargar el JSON de cliente'); console.error(e); return; }
+  catch(e){ log('❗ No pude cargar el JSON de cliente'); return; }
 
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  scene.setAttribute('mindar-image',
+    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Cámara en cover detrás
+  // WebCam cover detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -87,31 +91,31 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Póster: papel + sombra ---------- */
+  /* ---------- Póster: fondo blanco (detrás de todo) ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
-  root.appendChild(paper); setRO(paper, 5, false, false);
+  root.appendChild(paper); setRO(paper, 1, false, false);
 
-  const drop=document.createElement('a-plane');
+  const drop=document.createElement('a-plane'); // sombra sutil
   drop.setAttribute('width',1.06); drop.setAttribute('height',H*1.06);
   drop.setAttribute('position','0 -0.01 -0.03');
   drop.setAttribute('rotation','-4 0 0');
-  drop.setAttribute('material','shader:flat; color:#000; opacity:.16; transparent:true; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(drop); setRO(drop, 1, false, false);
+  drop.setAttribute('material','shader:flat; color:#000; opacity:.14; transparent:true; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(drop); setRO(drop, 0, false, false);
 
-  /* ---------- Marco + VÍDEO (VideoTexture robusta) ---------- */
+  /* ---------- Marco + VÍDEO (asegurado que no queda tapado) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || ''; // p.ej. tu Cloudinary mp4
+  v1.src = CFG.video || '';  // ej: https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4
   v1.load();
 
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-  // Marco doble
+  // Marco doble (SIEMPRE por debajo del vídeo)
   const frameOuter=document.createElement('a-plane');
   frameOuter.setAttribute('width',u.wn*1.045); frameOuter.setAttribute('height',u.hn*1.045);
   frameOuter.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
@@ -122,16 +126,16 @@
   frameInner.setAttribute('width',u.wn*1.00); frameInner.setAttribute('height',u.hn*1.00);
   frameInner.setAttribute('position',`${u.cx} ${u.cy} 0.006`);
   frameInner.setAttribute('material','shader:flat; color:#e8eef2; side:double');
-  root.appendChild(frameInner); setRO(frameInner, 15, false, false);
+  root.appendChild(frameInner); setRO(frameInner, 12, false, false);
 
-  // Plano del vídeo
+  // Plano del vídeo (EL ÚNICO con depthTest+Write)
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false');
-  root.appendChild(vPlane); setRO(vPlane, 90, true, true);
+  root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
-  // “neón” sutil alrededor
+  // Borde glow sutil (por debajo del vídeo)
   const glowCol1 = CFG.colors?.wave1 || '#13d77a';
   const glowCol2 = CFG.colors?.wave2 || '#ffd54a';
   (function neon(){
@@ -147,13 +151,13 @@
       p.setAttribute('width',s.w); p.setAttribute('height',s.h);
       p.setAttribute('position',`${s.x} ${s.y} 0.018`);
       const col = i%2 ? glowCol2 : glowCol1;
-      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.24; roughness:1; metalness:0; transparent:true; opacity:.9`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.42; dir:alternate; dur:1300; loop:true; easing:easeInOutSine');
-      root.appendChild(p); setRO(p, 30, false, false);
+      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
+      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1300; loop:true; easing:easeInOutSine');
+      root.appendChild(p); setRO(p, 20, false, false);
     });
   })();
 
-  // VideoTexture + cover + reintentos
+  // VideoTexture + cover + reintentos (evita “vídeo negro”)
   let videoTex=null;
   function applyCover(tex){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
@@ -166,7 +170,6 @@
   function setVideoTexture(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
     videoTex = new AFRAME.THREE.VideoTexture(v1);
-    videoTex.colorSpace = (AFRAME.THREE.SRGBColorSpace||AFRAME.THREE.NoColorSpace);
     videoTex.needsUpdate = true;
     mesh.material.map = videoTex; mesh.material.needsUpdate = true;
     applyCover(videoTex);
@@ -175,18 +178,17 @@
   vPlane.addEventListener('loaded', trySet);
   v1.addEventListener('loadeddata', trySet);
   v1.addEventListener('playing', trySet);
-  v1.addEventListener('error', ()=>log('⚠️ Error de vídeo (revisa URL/CORS de CFG.video)'));
 
-  /* ---------- Canvas overlay: textos + barra + waveform ---------- */
+  /* ---------- Canvas overlay: textos + barra mejorada ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
+  overlay.setAttribute('position','0 0 0.0');  // debajo del vídeo
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
-  root.appendChild(overlay); setRO(overlay, 25, false, false);
+  root.appendChild(overlay); setRO(overlay, 5, false, false);
   overlay.addEventListener('loaded', ()=>{
     const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
     const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
@@ -197,9 +199,9 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ---------- Audio ---------- */
+  /* ---------- Audio + Analyser (smoothing) ---------- */
   const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null, lastBeat=0;
+  let audio=null, acx=null, analyser=null;
   function setupAudio(){
     if(audio) return;
     audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -208,7 +210,7 @@
       acx=new AC();
       analyser=acx.createAnalyser();
       analyser.fftSize=128;
-      analyser.smoothingTimeConstant=0.85;
+      analyser.smoothingTimeConstant=0.88; // suave
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
     }catch{}
@@ -217,8 +219,10 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Dibujo barra + waveform ---------- */
-  const bars=48, waveH=Math.round(34*Cw/2048), gap=Math.round(22*Cw/2048);
+  /* ---------- Barra musical PRO (decay + peaks + glow sweep) ---------- */
+  const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
+  const levels=new Array(BARS).fill(0);
+  const peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function draw(){
@@ -239,13 +243,13 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra
+    // Barra base
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
-    ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
+    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
-    // Progreso
+    // Progreso y tiempos
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -261,29 +265,57 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble
+    // Espectro doble con smoothing y picos
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
-    const step=pbw/bars, yTop=pby - gap, yBot=pby + pbh + gap;
-    let level=0;
+
+    const step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
+    const t = performance.now();
+    const sweep = (Math.sin(t/900)+1)/2; // 0..1
+    const sweepX = pbx + sweep*pbw;
+
     for(let pass=0; pass<2; pass++){
       const baseY = (pass===0? yTop : yBot);
-      for(let i=0;i<bars;i++){
-        let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/320)+(i*0.33)));
-        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
-        const h = Math.max(4, Math.round(v*waveH));
+      const col1 = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+
+      for(let i=0;i<BARS;i++){
+        // valor nuevo (o idle si no hay audio)
+        const bandIndex = Math.min(arr?arr.length-1:0, 2+i);
+        const raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
+        // smoothing + decay
+        levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
+        peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
+
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
-        ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
-        (pass===1) ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
-      }
-    }
-    level /= (arr? bars : 1);
+        const h = Math.max(3, Math.round(levels[i]*waveH));
+        const peakY = Math.max(4, Math.round(peaks[i]*waveH));
 
-    // “beat” -> nota musical si está activado
-    if(ENABLE_NOTES && analyser && level>0.55 && (performance.now()-lastBeat)>260){
-      lastBeat = performance.now();
-      spawnNote();
+        // brillo que pasa por encima
+        const dist = Math.abs((x+w/2) - sweepX);
+        const glow = Math.max(0, 1 - dist/120);
+
+        // barra
+        ctx.fillStyle = col1;
+        if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+
+        // "peak hold" (pequeña tapita)
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#000';
+        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
+        else         ctx.fillRect(x, baseY+peakY,   w, 2);
+        ctx.globalAlpha = 1;
+
+        // glow
+        if(glow>0){
+          const g = ctx.createLinearGradient(x,0,x+w,0);
+          g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = g;
+          if(pass===0) ctx.fillRect(x, baseY-h, w, h);
+          else         ctx.fillRect(x, baseY,   w, h);
+        }
+      }
     }
 
     if(overlay.__tex) overlay.__tex.needsUpdate = true;
@@ -291,101 +323,16 @@
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Ken Burns suave ---------- */
+  /* ---------- Ken Burns suave en vídeo ---------- */
   function kenBurns(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map){ requestAnimationFrame(kenBurns); return; }
     const t=mesh.material.map;
     const rx=t.repeat.x, ry=t.repeat.y, ox=t.offset.x, oy=t.offset.y;
-    const dx=(Math.sin(performance.now()/6000)*0.015)*rx, dy=(Math.cos(performance.now()/9000)*0.015)*ry;
+    const dx=(Math.sin(performance.now()/6500)*0.015)*rx, dy=(Math.cos(performance.now()/9500)*0.015)*ry;
     t.offset.set(clamp(ox+dx,0,1-rx), clamp(oy+dy,0,1-ry)); t.needsUpdate=true;
     requestAnimationFrame(kenBurns);
   }
   requestAnimationFrame(kenBurns);
-
-  /* ---------- Notas musicales con física ligera (arrastrables) ---------- */
-  const NOTE_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23000000" d="M44 6v32.6c0 6.2-5 11.2-11.2 11.2S21.6 44.8 21.6 38.6 26.6 27.4 32.8 27.4c2.4 0 4.6.8 6.4 2.1V6H44z"/></svg>';
-  const notes=[]; // {el,x,y,vx,vy}
-  const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
-
-  function spawnNote(){
-    const x = (area.x1+area.x2)/2 + (Math.random()-0.5)*0.22;
-    const y = area.y2 - 0.05;
-    const n = document.createElement('a-image');
-    n.setAttribute('src', NOTE_SVG);
-    n.setAttribute('width', 0.10); n.setAttribute('height', 0.10);
-    n.setAttribute('position', `${x} ${y} 0.06`);
-    n.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double; color:#000');
-    n.classList.add('note');
-    root.appendChild(n); setRO(n, 140, false, false);
-    const obj={el:n, x, y, vx:(Math.random()-0.5)*0.14, vy:0.38+Math.random()*0.22};
-    notes.push(obj);
-    if(notes.length>20){ const old=notes.shift(); old.el.remove(); }
-  }
-
-  (function notesTick(){
-    if(!ENABLE_NOTES){ requestAnimationFrame(notesTick); return; }
-    const g=-0.9, damp=0.55, dt=1/60;
-    notes.forEach(o=>{
-      if(o!==grabbed){
-        o.vy += g*dt;
-        o.x += o.vx*dt;
-        o.y += o.vy*dt;
-      }
-      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-      o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
-      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/350)*5}`);
-    });
-    requestAnimationFrame(notesTick);
-  })();
-
-  // arrastre con raycast al plano del vídeo
-  let grabbed=null, grabOffset=new AFRAME.THREE.Vector3(), lastPos=new AFRAME.THREE.Vector3(), lastMoveTime=0;
-  function posterPointFromEvent(evt){
-    if(!scene?.camera) return null;
-    const rect = scene.canvas.getBoundingClientRect();
-    const ndc = {
-      x: (evt.clientX - rect.left) / rect.width  * 2 - 1,
-      y: -((evt.clientY - rect.top) / rect.height) * 2 + 1
-    };
-    const rc = new AFRAME.THREE.Raycaster();
-    rc.setFromCamera(ndc, scene.camera);
-    const mesh = vPlane.getObject3D('mesh'); if(!mesh) return null;
-    const hit = rc.intersectObject(mesh, true)[0];
-    if(!hit) return null;
-    return root.object3D.worldToLocal(hit.point.clone());
-  }
-
-  window.addEventListener('pointerdown', (ev)=>{
-    if(!ENABLE_NOTES) return;
-    // detectar si clicaste sobre una nota
-    const p = posterPointFromEvent(ev); if(!p) return;
-    let best=null, d2=1e9;
-    notes.forEach(o=>{ const dx=o.x-p.x, dy=o.y-p.y; const dd=dx*dx+dy*dy; if(dd<d2 && dd<0.02) {d2=dd; best=o;} });
-    if(best){
-      grabbed = best; grabbed.vx=grabbed.vy=0;
-      grabOffset.set(grabbed.x - p.x, grabbed.y - p.y, 0);
-      lastMoveTime = performance.now(); lastPos.set(grabbed.x, grabbed.y, 0);
-    }
-  }, {passive:true});
-
-  window.addEventListener('pointermove', (ev)=>{
-    if(!grabbed) return;
-    const p = posterPointFromEvent(ev); if(!p) return;
-    const now = performance.now(), dt = Math.max(0.016, (now - lastMoveTime)/1000);
-    lastMoveTime = now;
-    const nx = clamp(p.x + grabOffset.x, area.x1, area.x2);
-    const ny = clamp(p.y + grabOffset.y, area.y1, area.y2);
-    grabbed.vx = (nx - lastPos.x) / dt * 0.25;
-    grabbed.vy = (ny - lastPos.y) / dt * 0.25;
-    grabbed.x = nx; grabbed.y = ny;
-    grabbed.el.setAttribute('position', `${nx} ${ny} 0.06`);
-    lastPos.set(nx, ny, 0);
-  }, {passive:true});
-
-  window.addEventListener('pointerup', ()=>{ grabbed=null; }, {passive:true});
 
   /* ---------- Estados / UI ---------- */
   const btnStart=document.getElementById('btnStart');
@@ -399,27 +346,26 @@
       btnStart.textContent='Cámara lista';
     }catch(e){
       btnStart.disabled=false;
-      log(`No se pudo iniciar cámara: ${e.name||''} ${e.message||e}`);
-      alert('No se pudo abrir la cámara.\n• Permite permisos\n• Usa HTTPS\n• Cierra otras apps de cámara\n• En Brave/otros, permite la cámara para esta página');
+      log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+      // sin alertas, solo log
     }
   };
 
   anchor.addEventListener('targetFound', async ()=>{
-    // vídeo
-    try{ await v1.play(); setTimeout(trySet, 50); }catch{}
-    // audio autoplay
+    // Vídeo
+    try{ await v1.play(); setTimeout(()=>{ if(!videoTex) trySet(); }, 60); }catch{}
+    // Audio autoplay
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
     log('Target FOUND');
-    if(ENABLE_NOTES){ for(let i=0;i<3;i++) spawnNote(); }
   });
 
   anchor.addEventListener('targetLost', ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // forzar primer gesto (iOS)
+  // primer gesto para iOS
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
