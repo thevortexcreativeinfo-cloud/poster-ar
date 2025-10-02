@@ -37,8 +37,8 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Evita warning inicial; el src real lo pone JS con CFG.video -->
-    <video id="v1" src="about:blank" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- Sin src para evitar CORS; el src real lo pone el JS desde CFG.video -->
+    <video id="v1" playsinline webkit-playsinline muted preload="metadata" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
@@ -70,7 +70,7 @@
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ========== MindAR: escena y cámara detrás ========== */
+  /* ========== MindAR ========== */
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
@@ -91,7 +91,7 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ========== Fondo blanco del póster ========== */
+  /* ========== Fondo del póster ========== */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
@@ -132,7 +132,7 @@
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || ''; // p.ej. Cloudinary mp4
+  v1.src = CFG.video || '';  // tu Cloudinary MP4
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -152,7 +152,7 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  /* ========== Canvas overlay (textos + barra musical mejorada) ========== */
+  /* ========== Canvas overlay (textos + barra musical) ========== */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -365,7 +365,7 @@
     requestAnimationFrame(heartsTick);
   })();
 
-  /* ========== START DEL BOTÓN — MÁS ROBUSTO ========== */
+  /* ========== START DEL BOTÓN — ROBUSTO ========== */
   async function waitSceneLoaded(){
     if(scene.hasLoaded) return;
     await new Promise(res=>scene.addEventListener('loaded', res, {once:true}));
@@ -408,16 +408,14 @@
 
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); }catch{}
-    // audio autoplay
     setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
-    // corazones de bienvenida
     for(let i=0;i<4;i++) spawnHeart();
     log('Target FOUND');
   });
   anchor.addEventListener('targetLost', ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…'); });
 
-  // También intentamos arrancar en el primer gesto (iOS)
+  // Arranque también con el primer gesto (iOS)
   window.addEventListener('pointerdown', ()=>{ if(!scene?.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
