@@ -54,19 +54,32 @@
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* ===== Cargar JSON ===== */
+  // ---------- Helper: render order y depth ----------
+  function setRO(el, renderOrder, writeDepth){
+    el.addEventListener('loaded', ()=>{
+      const mesh = el.getObject3D('mesh'); if(!mesh) return;
+      mesh.renderOrder = renderOrder;
+      if(mesh.material){
+        mesh.material.depthTest  = !!writeDepth;
+        mesh.material.depthWrite = !!writeDepth;
+        mesh.material.needsUpdate = true;
+      }
+    });
+  }
+
+  // ---------- Carga JSON obligatoria ----------
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch{ alert('No pude cargar el JSON de cliente'); return; }
 
-  /* ===== Preparar escena MindAR ===== */
+  // ---------- MindAR ----------
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // cámara en cover
+  // Cámara en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -86,38 +99,38 @@
   }
   applyCal();
 
-  /* ===== Papel blanco (opaco) ===== */
+  // ---------- Papel blanco (opaco, detrás de todo) ----------
   const paper = document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
-  paper.setAttribute('position','0 0 -0.01');
-  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false; depthTest:false');
+  paper.setAttribute('position','0 0 -0.02');
+  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper);
+  setRO(paper, 50, false);
 
-  /* ===== Marco + Vídeo ===== */
+  // ---------- Marco + Vídeo ----------
   const v1 = document.getElementById('v1'); v1.src = CFG.video||'';
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-  // marco (doble borde) que SIEMPRE se ve
-  (function makeFrame(){
-    const outer = document.createElement('a-plane'); // sombra/borde exterior
-    outer.setAttribute('width', u.wn*1.04); outer.setAttribute('height', u.hn*1.04);
-    outer.setAttribute('position', `${u.cx} ${u.cy} 0.02`);
-    outer.setAttribute('material','shader:flat; color:#0b0b0b; opacity:0.95; side:double');
-    root.appendChild(outer);
+  // Marco (dos planos). No deben tapar el vídeo.
+  const outer = document.createElement('a-plane');
+  outer.setAttribute('width', u.wn*1.04); outer.setAttribute('height', u.hn*1.04);
+  outer.setAttribute('position', `${u.cx} ${u.cy} 0.00`);
+  outer.setAttribute('material','shader:flat; color:#0b0b0b; opacity:0.95; side:double');
+  root.appendChild(outer); setRO(outer, 180, false);
 
-    const inner = document.createElement('a-plane'); // filete interior
-    inner.setAttribute('width', u.wn*1.00); inner.setAttribute('height', u.hn*1.00);
-    inner.setAttribute('position', `${u.cx} ${u.cy} 0.025`);
-    inner.setAttribute('material','shader:flat; color:#dfe9ef; opacity:1; side:double');
-    root.appendChild(inner);
-  })();
+  const inner = document.createElement('a-plane');
+  inner.setAttribute('width', u.wn*1.00); inner.setAttribute('height', u.hn*1.00);
+  inner.setAttribute('position', `${u.cx} ${u.cy} 0.005`);
+  inner.setAttribute('material','shader:flat; color:#dfe9ef; opacity:1; side:double');
+  root.appendChild(inner); setRO(inner, 200, false);
 
-  const vPlane=document.createElement('a-plane'); // vídeo (encima del marco)
+  // Vídeo (encima de marco). ÚNICO con depth activado.
+  const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
-  root.appendChild(vPlane);
+  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; transparent:false');
+  root.appendChild(vPlane); setRO(vPlane, 900, true);
 
   function coverVideo(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
@@ -130,16 +143,17 @@
   vPlane.addEventListener('materialtextureloaded', coverVideo);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); coverVideo(); }, {once:true});
 
-  /* ===== Canvas overlay (textos + barra) detrás del vídeo ===== */
+  // ---------- Canvas overlay (textos + barra) detrás del vídeo ----------
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
 
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.0');  // detrás del vídeo
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  overlayP.setAttribute('position','0 0 0.0');  // por debajo del vídeo
+  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlayP);
+  setRO(overlayP, 120, false);
   overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); const m=overlayP.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlayP.__tex=tex; });
 
   const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
@@ -151,9 +165,9 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ===== Audio + UI ===== */
+  // ---------- Audio / UI ----------
   const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null, lastBeat=0;
+  let audio=null, acx=null, analyser=null;
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -163,58 +177,25 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ===== Play táctil en el póster ===== */
+  // Zona táctil Play/Pause (no tapa el vídeo)
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const hit = document.createElement('a-circle');
     hit.classList.add('ui3d');
     hit.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    hit.setAttribute('position', `${pb.cx} ${pb.cy} 0.08`);
+    hit.setAttribute('position', `${pb.cx} ${pb.cy} 0.015`);
     hit.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
     hit.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
-    root.appendChild(hit);
+    root.appendChild(hit); setRO(hit, 140, false);
     hit.addEventListener('click', async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } hit.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);}catch{} });
-
-    // aro con brillo (no tapa el vídeo)
-    const ring=document.createElement('a-torus');
-    ring.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.2);
-    ring.setAttribute('radius-tubular', 0.004);
-    ring.setAttribute('rotation','90 0 0');
-    ring.setAttribute('position', `${pb.cx} ${pb.cy} 0.075`);
-    ring.setAttribute('material','shader:standard; color:#13d77a; emissive:#13d77a; emissiveIntensity:0.25; roughness:1; metalness:0; transparent:true; opacity:.9');
-    ring.setAttribute('animation__breath','property:scale; from:0.98 0.98 0.98; to:1.02 1.02 1.02; dur:1200; easing:easeInOutSine; dir:alternate; loop:true');
-    root.appendChild(ring);
-    overlayP.__ring = ring;
   }
 
-  /* ===== Barras 3D (mejoradas) ===== */
-  const bars3D=[];
-  (function makeBars3D(){
-    const n=24;
-    const pbx=barSlot.x, pby=barSlot.y, pbw=barSlot.w, pbh=barSlot.h;
-    const boxWn=(pbw/PW)/n, cx=-0.5+(pbx+pbw/2)/PW, cy=H/2-(pby+pbh+ (24/PW)*Cw/2048)/PW;
-    for(let i=0;i<n;i++){
-      const b=document.createElement('a-box');
-      b.setAttribute('width', boxWn*0.8);
-      b.setAttribute('height', 0.002);
-      b.setAttribute('depth', 0.01);
-      b.setAttribute('position', `${cx - (pbw/PW)/2 + (i+0.5)*boxWn} ${cy} 0.05`);
-      // degradado “manual”: alterna dos colores
-      const col = (i%2)? (CFG.colors?.wave2 || '#ffd54a') : (CFG.colors?.wave1 || '#13d77a');
-      b.setAttribute('material', `shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.20; roughness:1; metalness:0`);
-      // idle breathing (aunque no haya música)
-      b.setAttribute('animation__idle', `property:scale; from:1 1 1; to:1 ${1+Math.random()*0.4} 1; dur:${900+Math.random()*600}; dir:alternate; loop:true; easing:easeInOutSine`);
-      root.appendChild(b);
-      bars3D.push(b);
-    }
-  })();
-
-  /* ===== Overlay draw: textos + barra 2D ===== */
+  // ---------- Dibujo (título, artista y barra 2D) ----------
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // título
+    // Título
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -222,14 +203,14 @@
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
 
-    // artista
+    // Artista
     const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
           aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // barra
+    // Barra 2D
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
@@ -243,7 +224,7 @@
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
-    // knob + tiempos
+    // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
@@ -256,24 +237,7 @@
   }
   requestAnimationFrame(draw);
 
-  /* ===== Tick de audio para barras 3D y aro ===== */
-  function audioTick(){
-    if(!analyser){ requestAnimationFrame(audioTick); return; }
-    const data=new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(data);
-    let level=0;
-    for(let i=0;i<bars3D.length;i++){
-      const v=(data[i+2]||0)/255; level+=v;
-      const h=0.01+v*0.10;
-      bars3D[i].setAttribute('scale', `1 ${h/0.002} 1`);
-    }
-    level/=bars3D.length;
-    if(overlayP.__ring){ const ei = 0.15 + level*0.9; overlayP.__ring.setAttribute('material','emissiveIntensity', ei); }
-    requestAnimationFrame(audioTick);
-  }
-  requestAnimationFrame(audioTick);
-
-  /* ===== Ken Burns suave ===== */
+  // ---------- Ken Burns suave ----------
   function kenBurns(){
     const B=vPlane.__base; if(!B){ requestAnimationFrame(kenBurns); return; }
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -284,37 +248,7 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ===== Parallax opcional ===== */
-  if(CFG.parallax){
-    (function parallaxTick(){
-      if(scene?.camera){
-        const obj=root.object3D, cam3=scene.camera;
-        const dx=cam3.position.x - obj.position.x, dy=cam3.position.y - obj.position.y, max=0.8;
-        obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
-        obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
-      }
-      requestAnimationFrame(parallaxTick);
-    })();
-  }
-
-  /* ===== Debug de slots ===== */
-  if(qs.get('dbg')==='1'){
-    function rectWire(slot,z,color){
-      const b=document.createElement('a-plane');
-      const u=px2(slot.x,slot.y,slot.w,slot.h);
-      b.setAttribute('width',u.wn); b.setAttribute('height',u.hn); b.setAttribute('position',`${u.cx} ${u.cy} ${z}`);
-      b.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:.15; side:double`);
-      root.appendChild(b);
-    }
-    rectWire(CFG.slotVid,   0.035, '#00e5ff');
-    rectWire(CFG.slotTitle, 0.001, '#00ff88');
-    rectWire(CFG.slotArtist,0.001, '#00ff88');
-    rectWire(CFG.slotBar,   0.001, '#ffaa00');
-    if(CFG.slotPlay) rectWire(CFG.slotPlay,0.085,'#ff4081');
-    log('DBG: slots pintados');
-  }
-
-  /* ===== Estados / UI ===== */
+  // ---------- Estados / UI ----------
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
@@ -335,10 +269,9 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer toque automático (mejor para iOS)
+  // Auto-arranque con primer gesto (iOS)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
 </body>
 </html>
-
