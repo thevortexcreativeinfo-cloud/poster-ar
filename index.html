@@ -3,24 +3,19 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Cinemático++ (auto + fix)</title>
+<title>Poster AR · Universal</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás */
-  video[playsinline]{
-    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important
-  }
-  /* WebGL delante */
-  a-scene,canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none!important}
-
-  /* UI */
+  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
+  a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
+  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;max-width:60vw;pointer-events:none;opacity:1;transition:opacity .4s}
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.15;transition:opacity .35s}
+  .dbg:hover{opacity:1}
   .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
@@ -32,7 +27,7 @@
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
-<div class="cal" id="cal">
+<div class="cal" id="cal" style="display:none">
   <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
   <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
   <button data-a="sc-" class="btn">Scale−</button><button data-a="sc+" class="btn">Scale+</button>
@@ -49,108 +44,67 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <img id="base" crossorigin="anonymous"
-         src="https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png">
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"
-           src="https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4"></video>
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <a-camera id="cam" look-controls="enabled:false"></a-camera>
+  <a-camera id="cam" look-controls="enabled:false">
+    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
+  </a-camera>
+
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
 <script>
-(function(){
+(async function(){
+  const qs = new URLSearchParams(location.search);
   const dbg = document.getElementById('dbg');
   const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
-  const fadeDbg = () => setTimeout(()=>dbg.style.opacity=.15, 1800);
 
-  const qs = new URLSearchParams(location.search);
+  // 1) Carga de CFG (obligatorio cfg=URL)
+  const cfgUrl = qs.get('cfg');
+  if(!cfgUrl){ say('❗ Falta ?cfg=URL_AL_JSON'); alert('Falta ?cfg=URL_AL_JSON'); return; }
+  let CFG;
+  try{
+    const r = await fetch(cfgUrl, {mode:'cors', cache:'no-store'});
+    CFG = await r.json();
+  }catch(e){ say('No pude cargar el cfg'); alert('No pude cargar el cfg'); return; }
 
-  // ------- Config -------
-  const TARGET_URL = qs.get('t') || 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
-  const AUDIO_URL  = qs.get('audio') || 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3';
-  const AUTOPLAY   = qs.get('autoplay') !== '0'; // por defecto on
-
-  const titleTxt  = decodeURIComponent(qs.get('title') || 'Shape of You');
-  const artistTxt = decodeURIComponent(qs.get('artist')|| 'Ed Sheeran');
-  const titleCol  = '#'+(qs.get('tc1')||'000000');
-  const artistCol = '#'+(qs.get('tc2')||'000000');
-
-  const PW=2481, PH=3508, H=PH/PW;
-  const SLOT = {x:296, y:316, w:1890, h:1682};
-  const TITLE = {x:200, y:2150, w:2080, h:190};
-  const ARTIST= {x:200, y:2330, w:2080, h:150};
-  const PB    = {x:300, y:2640, w:2060, h:26};
-  const TIME_L= {x:300, y:2680, w:160, h:40};
-  const TIME_R= {x:2060, y:2680, w:300, h:40};
-
-  // Calibración (ajustada a tu captura)
-  const CAL = {
-    dx: +(qs.get('dx')||-30),
-    dy: +(qs.get('dy')||432),
-    scale: +(qs.get('scale')||1.185),
-    rot: +(qs.get('rot')||-0.2)
-  };
-
-  const PARALLAX = qs.get('parallax')==='1';
-
-  // ------- Scene -------
   const scene=document.getElementById('scene');
-  scene.setAttribute('mindar-image', `imageTargetSrc:${TARGET_URL}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
-  scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{} });
+  scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
+  // Cámara en cover detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
-    if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'}); }
+    if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
+
+  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
+  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
   const anchor=document.getElementById('anchor');
   const root=document.createElement('a-entity'); anchor.appendChild(root);
   root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
 
+  const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
   function applyCal(){
-    root.setAttribute('position', `${CAL.dx/PW} ${-CAL.dy/PW} 0`);
-    root.setAttribute('scale', `${CAL.scale} ${CAL.scale} 1`);
-    root.setAttribute('rotation', `0 0 ${CAL.rot}`);
-    document.getElementById('readout').textContent = `dx:${CAL.dx}px dy:${CAL.dy}px scale:${CAL.scale.toFixed(3)} rot:${CAL.rot}°`;
+    root.setAttribute('position', `${(cal.dx||0)/PW} ${-(cal.dy||0)/PW} 0`);
+    root.setAttribute('scale', `${cal.scale||1} ${cal.scale||1} 1`);
+    root.setAttribute('rotation', `0 0 ${cal.rot||0}`);
+    document.getElementById('readout').textContent = `dx:${Math.round(cal.dx||0)} dy:${Math.round(cal.dy||0)} scale:${(cal.scale||1).toFixed(3)} rot:${(cal.rot||0)}`;
   }
   applyCal();
 
-  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
-
-  // ------- Vignette -------
+  // Vignette sutil
   const vignette=document.createElement('a-plane');
-  vignette.setAttribute('width', 1.16);
-  vignette.setAttribute('height', H*1.16);
+  vignette.setAttribute('width', 1.14);
+  vignette.setAttribute('height', H*1.14);
   vignette.setAttribute('position','0 0 -0.03');
-  vignette.setAttribute('material','shader:flat; color:#000; opacity:.22; transparent:true; side:double; depthTest:false');
+  vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
   root.appendChild(vignette);
 
-  // ------- Canvas overlay -------
-  const baseImg = document.getElementById('base');
-  const Cw = 2048, Ch = Math.round(Cw*H);
-  const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-  const ctx = canvas.getContext('2d');
-  let baseReady=false;
-  baseImg.onload = ()=>{ baseReady=true; say('Base IMG cargada'); fadeDbg(); };
-  baseImg.onerror= ()=>{ baseReady=false; say('⚠️ Error base IMG'); fadeDbg(); };
-
-  const overlayP = document.createElement('a-plane');
-  overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.00');
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
-  root.appendChild(overlayP);
-  overlayP.addEventListener('loaded', ()=>{
-    const tex = new AFRAME.THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    const mesh = overlayP.getObject3D('mesh');
-    mesh.material.map = tex; mesh.material.needsUpdate = true;
-    overlayP.__tex = tex;
-  });
-
-  // ------- Vídeo (delante del overlay) -------
-  const v1=document.getElementById('v1');
-  const u = px2(SLOT.x,SLOT.y,SLOT.w,SLOT.h);
+  /* ====== VÍDEO ====== */
+  const v1=document.getElementById('v1'); v1.src = CFG.video||'';
+  const vslot = CFG.slotVid;
+  const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);
@@ -159,207 +113,213 @@
 
   function setCover(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
-    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=SLOT.w/SLOT.h;
+    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
     vPlane.__base = {ox,oy,rx,ry,tex};
   }
   vPlane.addEventListener('materialtextureloaded', setCover);
-  v1.addEventListener('loadedmetadata', ()=>{ ensureVideo(); setCover(); }, {once:true});
-  v1.addEventListener('canplay', ensureVideo);
-  function ensureVideo(){
-    const tryPlay = ()=> v1.play().catch(()=>{});
-    tryPlay(); setTimeout(tryPlay,200); setTimeout(tryPlay,800);
-  }
+  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  // ------- Texto 3D doble capa (outline sutil) -------
-  function text3D(value, slot, color, weight=700){
-    const g=px2(slot.x,slot.y,slot.w,slot.h);
-    const back=document.createElement('a-entity');
-    back.setAttribute('position', `${g.cx} ${g.cy} 0.159`);
-    back.setAttribute('scale','1.015 1.015 1');
-    back.setAttribute('text', `value:${value}; align:center; anchor:center; color:#000; opacity:.30; width:${g.wn}; wrapCount:40; baseline:center;`);
-    const front=document.createElement('a-entity');
-    front.setAttribute('position', `${g.cx} ${g.cy} 0.16`);
-    front.setAttribute('text', `value:${value}; align:center; anchor:center; color:${color}; width:${g.wn}; wrapCount:40; baseline:center;`);
-    front.setAttribute('animation__fade','property:opacity; from:0; to:1; dur:280; easing:easeOutQuad; startEvents:show');
-    front.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:220; easing:easeOutQuad; startEvents:show');
-    root.appendChild(back); root.appendChild(front);
-    return {front,back};
-  }
-  const title3d  = text3D(titleTxt,  TITLE,  titleCol, 800);
-  const artist3d = text3D(artistTxt, ARTIST, artistCol, 600);
+  /* ====== CANVAS OVERLAY (títulos + barra/wave) ====== */
+  const Cw = 2048, Ch = Math.round(Cw*H);
+  const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
+  const ctx = canvas.getContext('2d');
+  const overlayP = document.createElement('a-plane');
+  overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
+  overlayP.setAttribute('position','0 0 0.02');
+  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  root.appendChild(overlayP);
+  overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate = true; const mesh = overlayP.getObject3D('mesh'); mesh.material.map = tex; mesh.material.needsUpdate = true; overlayP.__tex = tex; });
 
-  // ------- Audio / analyser -------
+  const titleSlot = CFG.slotTitle, artistSlot = CFG.slotArtist, barSlot = CFG.slotBar;
+  function fitFontFor(text, wpx, hpx, weight){
+    let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.74);
+    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1; }
+    return best;
+  }
+  const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
+  const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+
+  /* ====== AUDIO / UI ====== */
+  const btnStart=document.getElementById('btnStart');
   const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null, userOK=false, lastBeat=0;
+  let audio=null, acx=null, analyser=null, userGesture=false, lastBeat=0;
   const bars=48;
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function setupAudio(){
     if(audio) return;
-    audio = new Audio(AUDIO_URL); audio.crossOrigin='anonymous'; audio.preload='auto';
-    try{
-      const AC = window.AudioContext||window.webkitAudioContext;
-      acx = new AC();
-      analyser = acx.createAnalyser(); analyser.fftSize = 64;
-      const src = acx.createMediaElementSource(audio);
-      src.connect(analyser); analyser.connect(acx.destination);
-      say('WebAudio listo'); fadeDbg();
-    }catch(e){}
+    audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
+    try{ const AC=window.AudioContext||window.webkitAudioContext; acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64; const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination); }catch(e){}
+  }
+  btnAudio.onclick=async()=>{ userGesture=true; setupAudio(); try{ if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; } else { audio.pause(); btnAudio.textContent='▶️ Audio'; } }catch{} };
+
+  // Botón play/pause en 3D (área clicable invisible, opcional)
+  if(CFG.slotPlay){
+    const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
+    const playBtn = document.createElement('a-circle');
+    playBtn.classList.add('ui3d');
+    playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
+    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
+    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
+    playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
+    root.appendChild(playBtn);
+    playBtn.addEventListener('click', async()=>{
+      userGesture=true; setupAudio();
+      try{
+        if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
+        else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
+        playBtn.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);
+      }catch(e){}
+    });
   }
 
-  // ------- Dibujo canvas (base + barra + waveform) -------
-  function barColor(v){
-    const g = Math.min(1, Math.max(0, v));
-    if(g<0.5){ const t=g/0.5; const r=0x13+(0xff-0x13)*t, gr=0xd7+(0xd5-0xd7)*t, b=0x7a+(0x4a-0x7a)*t;
-      return `rgb(${r|0},${gr|0},${b|0})`;
-    }else{ const t=(g-0.5)/0.5; const r=0xff, gr=0xd5+(0x6d-0xd5)*t, b=0x4a+(0x6d-0x4a)*t;
-      return `rgb(${r},${gr|0},${b|0})`;
-    }
-  }
-  function drawOverlay(){
-    if(baseReady){ ctx.drawImage(baseImg, 0, 0, Cw, Ch); }
-    else{
-      ctx.clearRect(0,0,Cw,Ch);
-      ctx.fillStyle='#fff'; ctx.fillRect(0,0,Cw,Ch);
-      ctx.strokeStyle='#222'; ctx.lineWidth=Math.round(Cw*0.008);
-      ctx.strokeRect(Math.round(Cw*0.06), Math.round(Ch*0.06), Math.round(Cw*0.88), Math.round(Ch*0.88));
-      const vx=Math.round(SLOT.x*Cw/PW), vy=Math.round(SLOT.y*Ch/PH),
-            vw=Math.round(SLOT.w*Cw/PW), vh=Math.round(SLOT.h*Ch/PH);
-      ctx.strokeStyle='#888'; ctx.lineWidth=2; ctx.strokeRect(vx,vy,vw,vh);
-    }
-    // barra + tiempos
-    const pbx=Math.round(PB.x*Cw/PW), pby=Math.round(PB.y*Ch/PH),
-          pbw=Math.round(PB.w*Cw/PW), pbh=Math.max(2,Math.round(PB.h*Ch/PH));
+  /* ====== DIBUJO (textos + barra + waveform) ====== */
+  const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
+  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
+  function draw(){
+    ctx.clearRect(0,0,Cw,Ch);
+
+    // Título
+    const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
+          tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
+    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
+    ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+
+    // Artista
+    const ax = Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
+          aw = Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
+    ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
+    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
+    ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+
+    // Barra
+    const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
+          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
-    ctx.fillStyle='#13d77a'; ctx.fillRect(pbx, pby, fw, pbh);
+    const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
+    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
+    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
+
+    // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
-    const pulse=1+0.10*Math.sin(performance.now()/220);
-    ctx.beginPath(); ctx.arc(kx,ky,r*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-    // tiempos
+    const pulse=1+0.10*Math.sin(performance.now()/220); ctx.beginPath(); ctx.arc(kx,ky,r*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
     ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(cur, Math.round(TIME_L.x*Cw/PW), Math.round((TIME_L.y+TIME_L.h)*Ch/PH));
-    ctx.textAlign='right';
-    ctx.fillText(dur, Math.round((TIME_R.x+TIME_R.w)*Cw/PW), Math.round((TIME_R.y+TIME_R.h)*Ch/PH));
-    // waveform doble
-    const bw=pbw, bh=Math.round(30*Cw/2048), gap=Math.round(20*Cw/2048);
-    const byTop  = pby - gap - bh;
-    const byBottom = pby + pbh + gap;
+    ctx.fillText(cur, pbx, pby - 10);
+    ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
+
+    // Waveform doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
+    const step=pbw/(CFG.waveBars||48);
+    const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
     let level=0;
-    function paintWave(yBase, mirror=false){
-      ctx.save(); ctx.translate(pbx, yBase + (mirror?0:bh));
-      const step=bw/bars;
-      for(let i=0;i<bars;i++){
+    ctx.save();
+    for(let pass=0; pass<2; pass++){
+      const baseY = (pass===0? byTop : byBot);
+      const mirror = (pass===1);
+      for(let i=0;i<(CFG.waveBars||48);i++){
         let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
         if(arr){ v = (arr[2+i]||0)/255; level+=v; }
-        const h=Math.max(4, Math.round(v*bh)), x=Math.round(i*step + step*0.18), w=Math.max(2,Math.round(step*0.64));
-        ctx.fillStyle=barColor(v);
-        mirror ? ctx.fillRect(x, 0, w, h) : ctx.fillRect(x, -h, w, h);
+        const h = Math.max(4, Math.round(v*waveTopHeight));
+        const x = Math.round(pbx + i*step + step*0.18);
+        const w = Math.max(2, Math.round(step*0.64));
+        ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+        mirror ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
       }
-      ctx.restore();
     }
-    ctx.fillStyle='rgba(19,215,122,0.10)'; ctx.fillRect(pbx, byTop-6, bw, 6); ctx.fillRect(pbx, byBottom, bw, 6);
-    paintWave(byTop, false); paintWave(byBottom, true);
+    ctx.restore();
+    if(arr){ level/= (CFG.waveBars||48); const now=performance.now(); if(level>0.52 && now-lastBeat>200){ lastBeat=now; particles('#ffd54a',8); } }
 
-    if(arr){ level/=bars; const now=performance.now(); if(level>0.50 && now-lastBeat>200){ lastBeat=now; burstParticles('#ffd54a', 8); } }
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
+    requestAnimationFrame(draw);
   }
+  requestAnimationFrame(draw);
+
+  function particles(color='#13d77a', count=8){
+    for(let i=0;i<count;i++){
+      const p=document.createElement('a-circle');
+      p.setAttribute('radius', 0.006 + Math.random()*0.012);
+      p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
+      p.setAttribute('position', `${(Math.random()-0.5)*0.28} ${-H*0.18 + Math.random()*0.12} 0.18`);
+      const dy = 0.22 + Math.random()*0.25, dx = (Math.random()-0.5)*0.25, dur = 900 + Math.random()*600;
+      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.18+dy} 0.18; dur:${dur}; easing:easeOutQuad`);
+      p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
+      root.appendChild(p); setTimeout(()=>p.remove(), dur+80);
+    }
+  }
+
   function kenBurns(){
     const B=vPlane.__base; if(!B) return;
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
     const ox=Math.max(0, Math.min(1-B.rx, B.ox + dx));
     const oy=Math.max(0, Math.min(1-B.ry, B.oy + dy));
     B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
+    requestAnimationFrame(kenBurns);
   }
-  function loop(){ drawOverlay(); kenBurns(); requestAnimationFrame(loop); }
-  requestAnimationFrame(loop);
+  requestAnimationFrame(kenBurns);
 
-  // ------- Parallax -------
-  function parallaxTick(){
-    if(!PARALLAX || !scene?.camera) return requestAnimationFrame(parallaxTick);
-    const obj=root.object3D, cam3=scene.camera;
-    const dx=cam3.position.x - obj.position.x, dy=cam3.position.y - obj.position.y, max=0.8;
-    obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
-    obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
-    requestAnimationFrame(parallaxTick);
+  // Parallax opcional
+  if(CFG.parallax){
+    (function parallaxTick(){
+      if(scene?.camera){
+        const obj=root.object3D, cam3=scene.camera;
+        const dx=cam3.position.x - obj.position.x, dy=cam3.position.y - obj.position.y, max=0.8;
+        obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
+        obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
+      }
+      requestAnimationFrame(parallaxTick);
+    })();
   }
-  requestAnimationFrame(parallaxTick);
 
-  // ------- Estados AR -------
-  anchor.addEventListener('targetFound', async()=>{
-    root.emit('pop',null,false);
-    title3d.front.emit('show',null,false); artist3d.front.emit('show',null,false);
-    ensureVideo();
-    btnAudio.disabled=false;
-    // Autoplay tras gesto de abrir cámara
-    if(AUTOPLAY && userOK){ setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{} }
-    say('Target FOUND'); fadeDbg();
-  });
-  anchor.addEventListener('targetLost', ()=>{
-    v1.pause(); audio?.pause();
-    say('Target LOST…'); fadeDbg();
-  });
-
-  // ------- UI -------
-  const btnStart=document.getElementById('btnStart');
-  btnStart.onclick=async()=>{
-    try{
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
-      btnStart.disabled=true; btnStart.textContent='Cámara lista'; userOK=true; // gesto obtenido
-      say('Cámara iniciada'); fadeDbg();
-      // si ya tenía target, intenta audio
-      if(AUTOPLAY){ setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{} }
-    }catch{ say('No se pudo iniciar cámara'); }
-  };
-
-  btnAudio.onclick=async()=>{
-    setupAudio();
-    try{
-      if(!audio) return;
-      if(audio.paused){ userOK=true; acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
-      else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
-    }catch{}
-  };
-
-  // Gesto global por si acaso
-  window.addEventListener('touchend', ()=>{ userOK=true; setupAudio(); audio?.play?.().catch(()=>{}); }, {once:true,passive:true});
-  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
-
-  // Calibración
-  if(qs.get('cal')==='0') document.getElementById('cal').style.display='none';
+  // Estados / UI
+  document.getElementById('cal').style.display = (qs.get('cal')==='1' ? 'block' : 'none');
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
       const s=6, sc=0.005, rt=0.2, a=b.dataset.a;
-      if(a==='dx-') CAL.dx-=s; if(a==='dx+') CAL.dx+=s;
-      if(a==='dy-') CAL.dy-=s; if(a==='dy+') CAL.dy+=s;
-      if(a==='sc-') CAL.scale=Math.max(0.9,CAL.scale-sc);
-      if(a==='sc+') CAL.scale=Math.min(1.3,CAL.scale+sc);
-      if(a==='rt-') CAL.rot-=rt; if(a==='rt+') CAL.rot+=rt;
+      if(a==='dx-') cal.dx-=s; if(a==='dx+') cal.dx+=s;
+      if(a==='dy-') cal.dy-=s; if(a==='dy+') cal.dy+=s;
+      if(a==='sc-') cal.scale=Math.max(0.9, cal.scale-sc);
+      if(a==='sc+') cal.scale=Math.min(1.3, cal.scale+sc);
+      if(a==='rt-') cal.rot-=rt; if(a==='rt+') cal.rot+=rt;
       applyCal();
     };
   });
   document.getElementById('copyUrl').onclick=async()=>{
     const url=new URL(location.href);
-    url.searchParams.set('dx', Math.round(CAL.dx));
-    url.searchParams.set('dy', Math.round(CAL.dy));
-    url.searchParams.set('scale', +CAL.scale.toFixed(3));
-    url.searchParams.set('rot', +CAL.rot.toFixed(1));
-    url.searchParams.set('autoplay', AUTOPLAY? '1':'0');
+    url.searchParams.set('dx', Math.round(cal.dx||0));
+    url.searchParams.set('dy', Math.round(cal.dy||0));
+    url.searchParams.set('scale', +(cal.scale||1).toFixed(3));
+    url.searchParams.set('rot', +(cal.rot||0).toFixed(1));
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
-  scene.addEventListener('arReady', ()=>{ say('Cámara OK'); fadeDbg(); });
-  scene.addEventListener('arError', ()=> say('Error cámara/permisos'));
+  const btnStart=document.getElementById('btnStart');
+  btnStart.onclick=async()=>{
+    try{
+      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
+      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      btnStart.disabled=true; btnStart.textContent='Cámara lista';
+      if(CFG.autoplay){ setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); document.getElementById('btnAudio').textContent='⏸ Audio'; }catch{} }
+    }catch{ say('No se pudo iniciar cámara'); }
+  };
+
+  anchor.addEventListener('targetFound', ()=>{ root.emit('pop',null,false); v1.play().catch(()=>{}); document.getElementById('btnAudio').disabled=false; say('Target FOUND'); });
+  anchor.addEventListener('targetLost',  ()=>{ v1.pause(); audio?.pause(); document.getElementById('btnAudio').textContent='▶️ Audio'; say('Target LOST…'); });
+
+  // Gesto global de seguridad
+  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
 </body>
