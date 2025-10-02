@@ -13,5 +13,5 @@
   "slotPlay":   { "x": 1050, "y": 2920, "w": 380,  "h": 380 },
   "cal": { "dx": -30, "dy": 432, "scale": 1.185, "rot": -0.2 },
   "autoplayOnFound": true,
-  "parallax": false
+  "parallax": true
 }
