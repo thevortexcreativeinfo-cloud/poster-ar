@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Cinemático</title>
+<title>Poster AR · Cinemático+</title>
 
 <!-- A-Frame + MindAR -->
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -11,29 +11,24 @@
 
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara en cover, detrás del WebGL */
+  /* Cámara detrás del WebGL y en cover */
   video[playsinline]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* Canvas WebGL por encima, sin capturar eventos */
+  /* Canvas WebGL encima, sin capturar eventos */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important;pointer-events:none!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none!important}
 
   /* UI superior */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9999;pointer-events:auto}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
-  .btn[disabled]{opacity:.6}
-
-  /* Debug toast */
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9999;pointer-events:none;
-       max-width:60ch}
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9999;pointer-events:auto}
 
-  /* Panel calibración */
+  /* Calibración */
   .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:96vw;z-index:9999;pointer-events:auto}
-  .chip,.btnCal{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
-  .btnCal{cursor:pointer}
+  .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
 <body>
@@ -45,15 +40,15 @@
 
 <!-- Calibración -->
 <div id="cal" class="cal">
-  <button data-act="dx-" class="btnCal">X−</button>
-  <button data-act="dx+" class="btnCal">X+</button>
-  <button data-act="dy-" class="btnCal">Y−</button>
-  <button data-act="dy+" class="btnCal">Y+</button>
-  <button data-act="sc-" class="btnCal">Scale−</button>
-  <button data-act="sc+" class="btnCal">Scale+</button>
-  <button data-act="rt-" class="btnCal">Rot−</button>
-  <button data-act="rt+" class="btnCal">Rot+</button>
-  <button id="copyUrl" class="btnCal">🔗 Copiar URL</button>
+  <button data-act="dx-" class="btn">X−</button>
+  <button data-act="dx+" class="btn">X+</button>
+  <button data-act="dy-" class="btn">Y−</button>
+  <button data-act="dy+" class="btn">Y+</button>
+  <button data-act="sc-" class="btn">Scale−</button>
+  <button data-act="sc+" class="btn">Scale+</button>
+  <button data-act="rt-" class="btn">Rot−</button>
+  <button data-act="rt+" class="btn">Rot+</button>
+  <button id="copyUrl" class="btn">🔗 Copiar URL</button>
   <span id="readout" class="chip"></span>
 </div>
 
@@ -65,7 +60,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets id="assets" timeout="60000">
-    <!-- overlay y vídeo se sobreescriben por URL si vienen -->
+    <!-- Cambia estas URLs si quieres -->
     <img id="overlayImg" crossorigin="anonymous"
          src="https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png"/>
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"
@@ -82,71 +77,51 @@
   const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
   window.addEventListener('error', e => say('JS ERROR: '+(e?.message||e)));
 
-  // ========= Parámetros por URL =========
-  const qs=new URLSearchParams(location.search);
-  const PARALLAX = qs.get('parallax')==='1';
-  const SHOW_CAL = qs.get('cal')!=='0';
-  const FX = (qs.get('fx')??'1') !== '0';   // activa efectos (shimmer, ken burns, eq real)
+  // ===== URL params =====
+  const qs = new URLSearchParams(location.search);
+  const PARALLAX = qs.get('parallax') === '1';
+  const SHOW_CAL = qs.get('cal') !== '0';
+  const FX = qs.get('fx') !== '0'; // efectos encendidos por defecto
 
-  // ========= Config por defecto (se pueden sobreescribir por URL) =========
-  const TARGET_URL = qs.get('t') ||
-    'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
-  const OVERLAY_URL = qs.get('d') ||
-    'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png';
-  const VIDEO_URL = qs.get('v1') ||
-    'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4';
-  const AUDIO_URL = qs.get('audio') ||
-    'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3';
-  const TITLE = qs.get('title') || 'Shape of You';
-  const ARTIST= qs.get('artist')|| 'Ed Sheeran';
+  // ====== Assets (puedes cambiarlos aquí) ======
+  const TARGET_URL = qs.get('t') || 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind';
+  const AUDIO_URL  = qs.get('audio') || 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3';
 
-  // Geometría del diseño (tamaño base en px)
-  const PW= +(qs.get('pw')||2481), PH= +(qs.get('ph')||3508), H=PH/PW;
-
-  // Rectángulo del vídeo (px en el diseño)
-  const slotVid = {
-    x: +(qs.get('x1')||296),
-    y: +(qs.get('y1')||316),
-    w: +(qs.get('vw1')||1890),
-    h: +(qs.get('vh1')||1682)
-  };
-
-  // Textos (título + artista)
-  const texts = [
-    { value: TITLE,  x:200, y:2150, w:2080, h:190, align:'center', color:'#000000', weight:700, shimmer:true },
-    { value: ARTIST, x:200, y:2330, w:2080, h:150, align:'center', color:'#000000', weight:500, shimmer:false }
-  ];
-
-  // Progreso de audio + tiempos
-  const PB={
-    x:300, y:2640, w:2060, h:18,
-    bg:'#000000', fill:'#13d77a', knob:'#000000',
-    timeLeft : { value:'0:00', x:300,  y:2680, w:180, h:44, align:'left',  color:'#000000', weight:700 },
-    timeRight: { value:'0:00', x:2060, y:2680, w:300, h:44, align:'right', color:'#000000', weight:700 }
-  };
-
-  // Calibración (por defecto + override URL)
-  const CAL = {
-    dx: +(qs.get('dx') ?? -30),
-    dy: +(qs.get('dy') ?? 252),
-    scale: +(qs.get('scale') ?? 1.1),
-    rot: +(qs.get('rot') ?? -0.6)
-  };
-
-  // ========= helpers =========
-  const scene=document.getElementById('scene');
-  const anchor=document.getElementById('anchor');
   const overlayImg = document.getElementById('overlayImg');
   const v1 = document.getElementById('v1');
 
-  // aplicar assets de URL si vienen
-  overlayImg.src = OVERLAY_URL;
-  v1.src = VIDEO_URL;
+  // ====== Geometría del póster (px de tu plantilla) ======
+  const PW=2481, PH=3508, H=PH/PW;
+  // Rectángulo del vídeo:
+  const slotVid = {x:296, y:316, w:1890, h:1682};
 
-  scene.setAttribute('mindar-image', `imageTargetSrc:${TARGET_URL}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  // Textos (editables o por query ?title=&artist=)
+  const texts = [
+    { value: decodeURIComponent(qs.get('title')||'Shape of You'), x:200, y:2150, w:2080, h:190, align:'center', color:'#000000', weight:800, shimmer:true },
+    { value: decodeURIComponent(qs.get('artist')||'Ed Sheeran'),   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000', weight:600, shimmer:false }
+  ];
+
+  // Progreso de audio + tiempos + hotspot de play (posición aprox. del icono de tu diseño)
+  const PB={ x:300, y:2640, w:2060, h:18, bg:'#000000', fill:'#13d77a', knob:'#000000',
+             timeLeft:{x:300, y:2680, w:160, h:40, align:'left',  color:'#000000', weight:700},
+             timeRight:{x:2060, y:2680, w:300, h:40, align:'right', color:'#000000', weight:700} };
+  const PLAY_HOTSPOT = { x:1160, y:3000, w:180, h:180 }; // área táctil sobre el botón play del arte
+
+  // Calibración inicial (puedes pasar ?dx=&dy=&scale=&rot= en la URL)
+  const CAL = {
+    dx:  +(qs.get('dx')||-30),
+    dy:  +(qs.get('dy')||252),
+    scale: +(qs.get('scale')||1.1),
+    rot: +(qs.get('rot')||-0.6)
+  };
+
+  // ====== Setup escena & cámara en cover ======
+  const scene=document.getElementById('scene');
+  const anchor=document.getElementById('anchor');
+  scene.setAttribute('mindar-image',
+    `imageTargetSrc:${TARGET_URL}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`
+  );
   scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{} });
-
-  // Cámara detrás (cover)
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -155,7 +130,7 @@
 
   const px2=(x,y,w,h)=>({ wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW });
 
-  // ========= root (calibración + entrada cinemática + parallax) =========
+  // ====== Root (calibración + parallax) ======
   const root=document.createElement('a-entity');
   anchor.appendChild(root);
   function applyCal(){
@@ -166,251 +141,272 @@
       `dx:${CAL.dx}px dy:${CAL.dy}px scale:${CAL.scale.toFixed(3)} rot:${CAL.rot}°`;
   }
   applyCal();
-  // entrada cinematográfica
-  root.setAttribute('animation__pop','property:scale; from:0.97 0.97 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
-  root.setAttribute('animation__tilt','property:rotation; from:0 0 -1.2; to:0 0 0; dur:360; easing:easeOutQuad; startEvents:pop');
 
-  // ========= Overlay completo (fade) =========
+  // ====== Vignette (detrás del póster) ======
+  if (FX){
+    const vg=document.createElement('a-plane');
+    vg.setAttribute('width', 1.12);
+    vg.setAttribute('height', H*1.12);
+    vg.setAttribute('position','0 0 -0.02');
+    vg.setAttribute('material','shader:flat; color:#000; opacity:.22; transparent:true; depthTest:false; side:double');
+    root.appendChild(vg);
+  }
+
+  // ====== Overlay completo con fade ======
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1);
   overlay.setAttribute('height',H);
   overlay.setAttribute('position','0 0 0.0');
   overlay.setAttribute('material','shader:flat; src:#overlayImg; transparent:true; side:double; depthTest:false; opacity:0');
   overlay.setAttribute('animation__fadein','property:material.opacity; from:0; to:1; dur:350; easing:easeOutQuad; startEvents:show');
-  overlay.setAttribute('animation__fadeout','property:material.opacity; from:1; to:0; dur:220; easing:easeInQuad; startEvents:hide');
+  overlay.setAttribute('animation__fadeout','property:material.opacity; from:1; to:0; dur:250; easing:easeInQuad; startEvents:hide');
   root.appendChild(overlay);
 
-  // ========= Vídeo (cover + fade + ken burns micro) =========
-  const vslot = px2(slotVid.x,slotVid.y,slotVid.w,slotVid.h);
+  // ====== Vídeo (brillo + cover + Ken Burns) ======
+  const vidU = px2(slotVid.x,slotVid.y,slotVid.w,slotVid.h);
   const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',vslot.wn); vPlane.setAttribute('height',vslot.hn);
-  vPlane.setAttribute('position',`${vslot.cx} ${vslot.cy} 0.03`);
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:0.001');
+  vPlane.setAttribute('width',vidU.wn); vPlane.setAttribute('height',vidU.hn);
+  vPlane.setAttribute('position',`${vidU.cx} ${vidU.cy} 0.03`);
+  // standard = permite emissive para “brillo”
+  vPlane.setAttribute('material','shader:standard; src:#v1; side:double; depthTest:false; metalness:0; roughness:.9; emissive:#fff; emissiveIntensity:.22; opacity:0');
   vPlane.setAttribute('animation__fadein','property:material.opacity; from:0; to:1; dur:350; easing:easeOutQuad; startEvents:show');
-  vPlane.setAttribute('animation__fadeout','property:material.opacity; from:1; to:0; dur:220; easing:easeInQuad; startEvents:hide');
+  vPlane.setAttribute('animation__fadeout','property:material.opacity; from:1; to:0; dur:250; easing:easeInQuad; startEvents:hide');
   root.appendChild(vPlane);
 
-  // COVER + KenBurns
-  let baseRepeat={rx:1,ry:1,ox:0,oy:0};
   function cover(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
     const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=slotVid.w/slotVid.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    baseRepeat={rx,ry,ox,oy};
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
   }
   vPlane.addEventListener('materialtextureloaded', cover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); cover(); }, {once:true});
 
-  // Ken Burns micro (opcional)
-  if(FX){
-    vPlane.addEventListener('materialtextureloaded', ()=>{
-      const mesh=vPlane.getObject3D('mesh'); const tex=mesh?.material?.map; if(!tex) return;
-      let t=0;
-      (function loopKB(){
-        // aplicar pequeños offsets sobre el baseRepeat, sin salirnos del recorte
-        const dx = Math.sin(t)*0.02*baseRepeat.rx;
-        const dy = Math.cos(t*0.9)*0.02*baseRepeat.ry;
-        tex.offset.set(baseRepeat.ox + dx, baseRepeat.oy + dy);
-        tex.needsUpdate=true; t+=0.003; requestAnimationFrame(loopKB);
-      })();
-    });
+  // Ken Burns suave (limitado al cover)
+  if (FX){
+    let kbT=0;
+    (function kenBurns(){
+      const mesh=vPlane.getObject3D('mesh'); const tex=mesh?.material?.map; if(tex){
+        kbT += 0.0025;
+        const amtX = 0.06*Math.sin(kbT), amtY = 0.04*Math.cos(kbT*0.8);
+        // movemos dentro del margen disponible sin salir del repeat
+        const offX = Math.max(0, tex.offset.x + amtX*0.001);
+        const offY = Math.max(0, tex.offset.y + amtY*0.001);
+        tex.offset.set(offX, offY); tex.needsUpdate=true;
+      }
+      requestAnimationFrame(kenBurns);
+    })();
   }
 
-  // ========= Textos (canvas -> textura) con shimmer opcional =========
+  // ====== Borde animado que se “dibuja” ======
+  let borderPlanes=[];
+  if (FX){
+    const th=0.004; // grosor
+    // top
+    const t=document.createElement('a-plane');
+    t.setAttribute('height',th); t.setAttribute('width',0.0001);
+    t.setAttribute('position',`0 ${H/2} 0.02`);
+    t.setAttribute('material','shader:flat; color:#111; opacity:.85; transparent:true; depthTest:false');
+    t.setAttribute('animation__draw','property:width; from:0; to:1; dur:320; easing:easeOutQuad; startEvents:draw');
+    root.appendChild(t);
+    // bottom
+    const b=t.cloneNode(); b.setAttribute('position',`0 ${-H/2} 0.02`); root.appendChild(b);
+    // left
+    const l=document.createElement('a-plane');
+    l.setAttribute('width',th); l.setAttribute('height',0.0001);
+    l.setAttribute('position',`${-0.5} 0 0.02`);
+    l.setAttribute('material','shader:flat; color:#111; opacity:.85; transparent:true; depthTest:false');
+    l.setAttribute('animation__draw','property:height; from:0; to:'+H+'; dur:320; easing:easeOutQuad; startEvents:draw');
+    root.appendChild(l);
+    // right
+    const r=l.cloneNode(); r.setAttribute('position',`${0.5} 0 0.02`); root.appendChild(r);
+    borderPlanes=[t,b,l,r];
+  }
+
+  // ====== Textos con shimmer ======
+  const textPlanes=[];
   function canvasText(slot){
-    const g=px2(slot.x,slot.y,slot.w,slot.h);
+    const {value,x,y,w,h,align,color,weight,shimmer}=slot;
+    const g=px2(x,y,w,h);
     const p=document.createElement('a-plane');
     p.setAttribute('width',g.wn); p.setAttribute('height',g.hn);
     p.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
     p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
-    p.setAttribute('animation__in','property:material.opacity; from:0; to:1; dur:300; easing:easeOutQuad; startEvents:show');
-    p.setAttribute('animation__out','property:material.opacity; from:1; to:0; dur:200; easing:easeInQuad; startEvents:hide');
-
-    // canvas @2x
-    const scale=2, cw=Math.min(2048,Math.max(64,Math.round(slot.w*scale)));
-    const ch=Math.min(1024,Math.max(32,Math.round(slot.h*scale)));
-    const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
-
-    function draw(text, shimmer=false, t=0){
-      ctx.clearRect(0,0,cw,ch);
-      ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=Math.floor(ch*.06); ctx.shadowOffsetY=Math.floor(ch*.03);
-      ctx.fillStyle=slot.color||'#000';
-      // ajuste binario de tamaño
-      let size=Math.floor(ch*.72), lo=12, hi=Math.floor(ch*.9), pad=Math.floor(cw*.04);
-      while(lo<=hi){ const mid=(lo+hi>>1);
-        ctx.font=`${slot.weight||600} ${mid}px system-ui,Segoe UI,Roboto`;
-        if(ctx.measureText(text).width <= cw-2*pad) { size=mid; lo=mid+1; } else hi=mid-1;
-      }
-      ctx.font=`${slot.weight||600} ${size}px system-ui,Segoe UI,Roboto`;
-      ctx.textBaseline='middle'; ctx.textAlign=(slot.align==='left'?'left':slot.align==='right'?'right':'center');
-      const x=(slot.align==='left')?pad:(slot.align==='right')?(cw-pad):cw/2, y=ch/2;
-      ctx.fillText(text, x, y);
-
-      if(shimmer && FX){
-        const g=ctx.createLinearGradient(0,0,cw,0);
-        const off=(Math.sin(t)*.5+.5)*cw;
-        g.addColorStop(0,'rgba(255,255,255,0)');
-        g.addColorStop(.5,'rgba(255,255,255,.26)');
-        g.addColorStop(1,'rgba(255,255,255,0)');
-        ctx.globalCompositeOperation='lighter';
-        ctx.translate(off,0); ctx.rotate(-12*Math.PI/180);
-        ctx.fillStyle=g; ctx.fillRect(-cw*.2, -ch, cw*.4, ch*3);
-        ctx.setTransform(1,0,0,1,0,0);
-        ctx.globalCompositeOperation='source-over';
-      }
-    }
-
-    // primera pintura
-    draw(slot.value, !!slot.shimmer, 0);
-
-    p.addEventListener('loaded',()=>{
-      const mesh=p.getObject3D('mesh'); if(!mesh) return;
-      const tex=new AFRAME.THREE.CanvasTexture(c);
-      tex.needsUpdate=true; mesh.material.map=tex; mesh.material.needsUpdate=true;
-
-      // guardar refs para updates
-      p.__canvas=c; p.__ctx=ctx; p.__mesh=mesh; p.__slot=slot;
-
-      if(slot.shimmer && FX){
-        let t=0; (function loop(){
-          t+=0.02; draw(slot.value, true, t);
-          tex.needsUpdate=true; mesh.material.needsUpdate=true;
-          requestAnimationFrame(loop);
-        })();
-      }
-    });
-
+    p.setAttribute('animation__in','property:material.opacity; from:0; to:1; dur:320; easing:easeOutQuad; startEvents:show');
     root.appendChild(p);
+
+    // dibuja texto a canvas
+    const scale=2, cw=Math.min(2048,Math.max(64,Math.round(w*scale))), ch=Math.min(1024,Math.max(32,Math.round(h*scale)));
+    const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
+    const fam=(weight||700)+' 64px system-ui,Segoe UI,Roboto';
+    ctx.fillStyle=color||'#000'; ctx.shadowColor='rgba(0,0,0,.30)'; ctx.shadowBlur=Math.floor(ch*.06); ctx.shadowOffsetY=Math.floor(ch*.03);
+    // auto-fit
+    let size=Math.floor(ch*.72), lo=12, hi=Math.floor(ch*.9), pad=Math.floor(cw*.04);
+    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=fam.replace('64px',mid+'px'); if(ctx.measureText(value).width<=cw-2*pad){ size=mid; lo=mid+1; } else hi=mid-1; }
+    ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle';
+    ctx.textAlign=(align==='left'?'left':align==='right'?'right':'center');
+    const xx=(align==='left')?pad:(align==='right')?(cw-pad):(cw/2), yy=ch/2; ctx.fillText(value,xx,yy);
+
+    p.addEventListener('loaded',()=>{ const mesh=p.getObject3D('mesh'); if(!mesh) return;
+      const tex=new AFRAME.THREE.CanvasTexture(c); tex.needsUpdate=true; mesh.material.map=tex; mesh.material.needsUpdate=true; });
+
+    // shimmer opcional (re-dibuja un highlight que barre)
+    if (FX && shimmer){
+      let t=0;
+      (function glide(){
+        t+=0.02;
+        // redraw base
+        ctx.clearRect(0,0,cw,ch);
+        ctx.fillStyle=color||'#000'; ctx.shadowColor='rgba(0,0,0,.30)'; ctx.shadowBlur=Math.floor(ch*.06); ctx.shadowOffsetY=Math.floor(ch*.03);
+        ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle'; ctx.textAlign=(align==='left'?'left':align==='right'?'right':'center');
+        ctx.fillText(value,xx,yy);
+        // shimmer
+        const grad=ctx.createLinearGradient(0,0,cw,0);
+        const pos=(Math.sin(t)*0.5+0.5); // 0..1
+        grad.addColorStop(Math.max(0,pos-0.1),'rgba(255,255,255,0)');
+        grad.addColorStop(pos,'rgba(255,255,255,0.25)');
+        grad.addColorStop(Math.min(1,pos+0.1),'rgba(255,255,255,0)');
+        ctx.globalCompositeOperation='lighter';
+        ctx.fillStyle=grad; ctx.fillRect(0,0,cw,ch); ctx.globalCompositeOperation='source-over';
+        const mesh=p.getObject3D('mesh'); if(mesh?.material?.map){ mesh.material.map.needsUpdate=true; }
+        requestAnimationFrame(glide);
+      })();
+    }
+    textPlanes.push(p);
     return p;
   }
+  texts.forEach(canvasText);
 
-  const textPlanes = texts.map(canvasText);
+  // ====== Audio + progreso + waveform + EQ ======
+  let audio=null, userOK=false, visible=false, progress=null, tLeft=null, tRight=null, eqBars=[], wfBars=[], acx=null, analyser=null, dataArr=null;
 
-  // ========= Audio + progreso + tiempos + EQ =========
-  let audio=null, userOK=false, visible=false, progress=null, tL=null, tR=null, eqBars=[], analyser=null, dataArr=null, acx=null, srcNode=null;
+  function labelCanvas({x,y,w,h,align,color,weight}, initial){
+    const slot={value:initial||'', x,y,w,h,align,color,weight};
+    const plane=canvasText(slot);
+    plane.__slot = slot;
+    plane.updateVal = (txt)=>{ slot.value=txt; plane.emit('show',null,false); };
+    return plane;
+  }
 
   function makeProgress(x,y,w,h,bg,fill,knob){
     const g=px2(x,y,w,h);
     const grp=document.createElement('a-entity'); grp.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
+    // fondo
     const bgp=document.createElement('a-plane'); bgp.setAttribute('width',g.wn); bgp.setAttribute('height',g.hn);
-    bgp.setAttribute('material',`shader:flat; color:${bg}; transparent:true; opacity:.9; side:double; depthTest:false`);
+    bgp.setAttribute('material',`shader:flat; color:${bg}; transparent:true; opacity:.92; side:double; depthTest:false`);
     bgp.setAttribute('position',`${g.wn/2} 0 0`);
-
+    // relleno
     const fillp=document.createElement('a-plane'); fillp.setAttribute('width',0.0001); fillp.setAttribute('height',g.hn);
     fillp.setAttribute('material',`shader:flat; color:${fill}; transparent:true; side:double; depthTest:false`);
     fillp.setAttribute('position',`0 0 0.001`);
-
+    // knob
     const knobp=document.createElement('a-circle'); knobp.setAttribute('radius',g.hn*0.9/2);
     knobp.setAttribute('material',`shader:flat; color:${knob}; side:double; depthTest:false`);
     knobp.setAttribute('position',`0 0 0.002`);
-    knobp.setAttribute('animation__pulse','property:scale; from:1 1 1; to:1.12 1.12 1; dur:120; dir:alternate; easing:easeOutQuad; startEvents:pulse');
+    knobp.setAttribute('animation__pulse','property:scale; from:1 1 1; to:1.12 1.12 1; dir:alternate; loop:true; dur:420; easing:easeInOutSine');
 
     grp.appendChild(bgp); grp.appendChild(fillp); grp.appendChild(knobp);
-    let s=0; return {group:grp, pulse:()=>knobp.emit('pulse',null,false),
-      set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); s=s*0.85+c*0.15; const wnow=g.wn*s;
-        fillp.setAttribute('width',wnow); fillp.setAttribute('position',`${wnow/2} 0 0.001`); knobp.setAttribute('position',`${wnow} 0 0.002`);} };
-  }
 
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
-
-  function drawLabel(plane, value){
-    const slot=plane.__slot, c=plane.__canvas, ctx=plane.__ctx, mesh=plane.__mesh; if(!slot||!c||!ctx||!mesh) return;
-    ctx.clearRect(0,0,c.width,c.height);
-    ctx.fillStyle=slot.color||'#000';
-    let size=Math.floor(c.height*.78), lo=10, hi=Math.floor(c.height*.9), pad=Math.floor(c.width*.06);
-    while(lo<=hi){ const mid=(lo+hi>>1);
-      ctx.font=`${slot.weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
-      if(ctx.measureText(value).width<=c.width-2*pad){ size=mid; lo=mid+1; } else hi=mid-1;
+    // waveform (24 barras) justo encima
+    const wfg=document.createElement('a-entity'); wfg.setAttribute('position',`${g.wn*0.1} ${g.hn*1.4} 0.001`);
+    const wfCount=24, wfWidth=g.wn*0.8/wfCount, wfMaxH=g.hn*3.2;
+    for(let i=0;i<wfCount;i++){
+      const bar=document.createElement('a-plane');
+      bar.setAttribute('width', wfWidth*0.9); bar.setAttribute('height', g.hn*0.4);
+      bar.setAttribute('position', `${i*wfWidth} 0 0`);
+      bar.setAttribute('material','shader:flat; color:#13d77a; transparent:true; opacity:.85; side:double; depthTest:false');
+      wfg.appendChild(bar); wfBars.push(bar);
     }
-    ctx.font=`${slot.weight||700} ${size}px system-ui,Segoe UI,Roboto`;
-    ctx.textBaseline='top'; ctx.textAlign=(slot.align==='left'?'left':slot.align==='right'?'right':'center');
-    const x=(slot.align==='left')?pad:(slot.align==='right')?(c.width-pad):c.width/2, y=0;
-    ctx.fillText(value, x, y);
-    if(mesh.material.map){ mesh.material.map.needsUpdate=true; mesh.material.needsUpdate=true; }
+    grp.appendChild(wfg);
+
+    // retorno controlador
+    let s=0; 
+    return {
+      group:grp,
+      set:(p)=>{ const c=Math.max(0,Math.min(1,p||0)); s=s*0.85+c*0.15; const wnow=g.wn*s;
+        fillp.setAttribute('width',wnow); fillp.setAttribute('position',`${wnow/2} 0 0.001`); knobp.setAttribute('position',`${wnow} 0 0.002`);
+      }
+    };
   }
 
   function buildAudio(){
     if(audio) return;
     audio = new Audio(AUDIO_URL); audio.crossOrigin='anonymous'; audio.preload='auto';
 
-    // progreso
     progress = makeProgress(PB.x,PB.y,PB.w,PB.h,PB.bg,PB.fill,PB.knob);
     root.appendChild(progress.group);
+    tLeft  = labelCanvas(PB.timeLeft,'0:00');
+    tRight = labelCanvas(PB.timeRight,'0:00');
 
-    // labels de tiempo
-    tL = canvasText(PB.timeLeft);
-    tR = canvasText(PB.timeRight);
+    // WebAudio analyser
+    try{
+      acx = new (window.AudioContext||window.webkitAudioContext)();
+      analyser = acx.createAnalyser(); analyser.fftSize = 64; dataArr = new Uint8Array(analyser.frequencyBinCount);
+      const srcNode = acx.createMediaElementSource(audio);
+      srcNode.connect(analyser); analyser.connect(acx.destination);
+      say('WebAudio listo');
+    }catch(e){ console.warn('Sin WebAudio, usando fallback'); }
+  }
 
-    // EQ (5 barras)
-    const g=px2(PB.x+PB.w*0.35, PB.y+PB.h*3.2, PB.w*0.3, PB.h*3.6);
-    const eq=document.createElement('a-entity'); eq.setAttribute('position',`${g.cx-g.wn/2} ${g.cy} 0.09`);
-    for(let i=0;i<5;i++){
-      const b=document.createElement('a-plane');
-      b.setAttribute('width', g.wn/8); b.setAttribute('height', g.hn/8);
-      b.setAttribute('position', `${(i+0.5)*g.wn/5} 0 0`);
-      b.setAttribute('material','shader:flat; color:#13d77a; side:double; depthTest:false; transparent:true');
-      eq.appendChild(b); eqBars.push(b);
-    }
-    root.appendChild(eq);
+  // ====== Play hotspot (tap) ======
+  const playHot = (()=>{
+    const g=px2(PLAY_HOTSPOT.x, PLAY_HOTSPOT.y, PLAY_HOTSPOT.w, PLAY_HOTSPOT.h);
+    const p=document.createElement('a-circle');
+    p.setAttribute('radius', Math.min(g.wn,g.hn)/2);
+    p.setAttribute('position',`${g.cx} ${g.cy} 0.13`);
+    p.setAttribute('material','shader:flat; color:#13d77a; opacity:0; transparent:true; side:double; depthTest:false');
+    // efecto ripple al tocar
+    p.setAttribute('animation__press','property:scale; from:1 1 1; to:1.25 1.25 1; dur:160; dir:alternate; easing:easeOutQuad; startEvents:press');
+    p.setAttribute('animation__flash','property:material.opacity; from:.0; to:.25; dur:120; dir:alternate; startEvents:press');
+    root.appendChild(p);
+    return p;
+  })();
 
-    // WebAudio (si FX)
-    if(FX){
-      try{
-        acx = new (window.AudioContext||window.webkitAudioContext)();
-        analyser = acx.createAnalyser(); analyser.fftSize = 64;
-        dataArr = new Uint8Array(analyser.frequencyBinCount);
-        srcNode = acx.createMediaElementSource(audio);
-        srcNode.connect(analyser); analyser.connect(acx.destination);
-        say('WebAudio listo');
-      }catch(e){ /* fallback sin analyser */ }
-    }
+  function togglePlay(){
+    navigator.vibrate?.(20);
+    if(!audio){ buildAudio(); }
+    // alterna audio y vídeo
+    if(audio && !audio.paused){ audio.pause(); v1.pause(); }
+    else { if(userOK){ audio.play().catch(()=>{}); } v1.play().catch(()=>{}); }
+    playHot.emit('press',null,false);
+  }
 
-    // animaciones ligadas al audio
-    (function loopAudioUI(){
-      // progreso + tiempos
-      if(audio && progress){
-        const d=audio.duration||0, ct=audio.currentTime||0;
-        if(d>0){ progress.set(ct/d); }
-        if(tL?.__canvas) drawLabel(tL, mmss(ct));
-        if(tR?.__canvas) drawLabel(tR, mmss(Math.max(0,(d-ct))));
-      }
-      // EQ y beat
-      if(analyser && dataArr && eqBars.length){
-        analyser.getByteFrequencyData(dataArr);
-        const mid = dataArr.slice(2,14).reduce((a,b)=>a+b)/12;
-        for(let i=0;i<eqBars.length;i++){
-          const v=dataArr[2+i*2]/255;  // bajas-medias
-          const h = (0.14 + 0.7*v);    // 0.14..0.84 (relativo)
-          const gH = (px2(0,0,PB.w*0.3, PB.h*3.6).hn); // altura base del grupo
-          eqBars[i].setAttribute('height', gH*h);
-          eqBars[i].setAttribute('position', `${(i+0.5)*px2(PB.x+PB.w*0.35,0,PB.w*0.3,0).wn/5} ${gH*h/2 - gH*0.1} 0`);
-        }
-        // beat pulse (umbral y limitador 300ms)
-        const now=performance.now(); if(!loopAudioUI._last) loopAudioUI._last=0;
-        if(mid>140 && now-loopAudioUI._last>300){ progress.pulse(); root.emit('beat',null,false); loopAudioUI._last=now; }
-      }
-      requestAnimationFrame(loopAudioUI);
+  // Tap sobre TODO el póster
+  root.addEventListener('click', (e)=>{ e.preventDefault(); togglePlay(); }, {passive:false});
+  // Tap preciso sobre botón play (se capta igual, pero da un feedback visual)
+  playHot.addEventListener('click', (e)=>{ e.preventDefault(); togglePlay(); }, {passive:false});
+
+  // ====== Light Sweep alrededor del vídeo (cada 5s) ======
+  let sweep=null;
+  if (FX){
+    const sw=document.createElement('a-plane');
+    const swH = 0.01; // grosor
+    sw.setAttribute('width', vidU.wn*0.25);
+    sw.setAttribute('height', swH);
+    sw.setAttribute('position', `${vidU.cx-vidU.wn/2} ${vidU.cy+vidU.hn/2+0.001} 0.031`);
+    sw.setAttribute('material','shader:flat; color:#ffffff; opacity:.18; transparent:true; side:double; depthTest:false');
+    root.appendChild(sw);
+    sweep = sw;
+    (function loopSweep(){
+      // recorre arriba → derecha → abajo → izquierda
+      sw.setAttribute('position', `${vidU.cx-vidU.wn/2} ${vidU.cy+vidU.hn/2+0.001} 0.031`);
+      sw.setAttribute('rotation', `0 0 0`);
+      sw.setAttribute('animation__move1', `property:position; to:${vidU.cx+vidU.wn/2} ${vidU.cy+vidU.hn/2+0.001} 0.031; dur:800; easing:linear`);
+      setTimeout(()=>{ sw.setAttribute('rotation','0 0 90'); sw.setAttribute('position', `${vidU.cx+vidU.wn/2+0.001} ${vidU.cy+vidU.hn/2} 0.031`);
+        sw.setAttribute('animation__move2', `property:position; to:${vidU.cx+vidU.wn/2+0.001} ${vidU.cy-vidU.hn/2} 0.031; dur:800; easing:linear`);
+      },820);
+      setTimeout(()=>{ sw.setAttribute('rotation','0 0 0'); sw.setAttribute('position', `${vidU.cx+vidU.wn/2} ${vidU.cy-vidU.hn/2-0.001} 0.031`);
+        sw.setAttribute('animation__move3', `property:position; to:${vidU.cx-vidU.wn/2} ${vidU.cy-vidU.hn/2-0.001} 0.031; dur:800; easing:linear`);
+      },1640);
+      setTimeout(()=>{ sw.setAttribute('rotation','0 0 90'); sw.setAttribute('position', `${vidU.cx-vidU.wn/2-0.001} ${vidU.cy-vidU.hn/2} 0.031`);
+        sw.setAttribute('animation__move4', `property:position; to:${vidU.cx-vidU.wn/2-0.001} ${vidU.cy+vidU.hn/2} 0.031; dur:800; easing:linear`);
+      },2460);
+      setTimeout(loopSweep, 5000);
     })();
   }
 
-  // ========= parallax suave =========
-  function parallaxTick(){
-    if(!PARALLAX || !scene?.camera) return requestAnimationFrame(parallaxTick);
-    const obj=root.object3D, cam3=scene.camera;
-    if(obj && cam3){
-      const dx=cam3.position.x - obj.position.x;
-      const dy=cam3.position.y - obj.position.y;
-      const max=0.8;
-      obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
-      obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
-    }
-    requestAnimationFrame(parallaxTick);
-  }
-  requestAnimationFrame(parallaxTick);
-
-  // ========= control de visibilidad / reproducción =========
+  // ====== Start / permisos ======
   const btnStart=document.getElementById('btnStart');
   const btnSound=document.getElementById('btnSound');
 
@@ -426,14 +422,56 @@
   scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{}; startAR(); });
   window.addEventListener('pointerup', ()=>startAR(), {once:true, passive:true});
 
+  // ====== Parallax ======
+  function parallaxTick(){
+    if(!PARALLAX || !scene?.camera) return requestAnimationFrame(parallaxTick);
+    const obj=root.object3D, cam3=scene.camera;
+    if(obj && cam3){
+      const dx=cam3.position.x - obj.position.x;
+      const dy=cam3.position.y - obj.position.y;
+      const max=0.8; // grados
+      obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
+      obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
+    }
+    requestAnimationFrame(parallaxTick);
+  }
+  requestAnimationFrame(parallaxTick);
+
+  // ====== Loop UI / audio-reactivo ======
+  (function tick(){
+    // progreso + tiempos
+    if(audio && progress){
+      if(audio.duration>0){
+        progress.set(audio.currentTime / audio.duration);
+        const mmss = t => { if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; };
+        tLeft?.updateVal(mmss(audio.currentTime));
+        tRight?.updateVal(mmss(audio.duration));
+      }
+    }
+    // waveform
+    if(analyser && wfBars.length){
+      analyser.getByteFrequencyData(dataArr);
+      for(let i=0;i<wfBars.length;i++){
+        const v = dataArr[i+2]/255; // evita DC
+        const h = (0.01 + 0.06*v);
+        wfBars[i].setAttribute('height', h);
+        wfBars[i].setAttribute('position', `${wfBars[i].getAttribute('position').x} ${h/2} 0`);
+      }
+    }
+    requestAnimationFrame(tick);
+  })();
+
+  // ====== eventos MindAR ======
   anchor.addEventListener('targetFound', ()=>{
-    visible=true; root.emit('pop',null,false);
+    visible=true;
     overlay.emit('show',null,false);
     vPlane.emit('show',null,false);
+    // dibujar borde
+    borderPlanes.forEach(p=>p.emit && p.emit('draw',null,false));
     v1.play().catch(()=>{});
-    buildAudio();
-    if(userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; }
-    else      { btnSound.hidden=false; }
+    // sonido si ya aprobado
+    if(userOK){ if(!audio) buildAudio(); audio.play().catch(()=>{}); btnSound.hidden=true; }
+    else { btnSound.hidden=false; }
     say('Target FOUND');
   });
 
@@ -441,25 +479,25 @@
     visible=false;
     overlay.emit('hide',null,false);
     vPlane.emit('hide',null,false);
-    v1.pause(); audio && audio.pause();
+    v1.pause();
+    audio && audio.pause();
     if(audio && userOK) btnSound.hidden=false;
     say('Target LOST…');
   });
 
   btnSound.onclick=async()=>{
     try{
-      if(audio){
-        userOK=true;
-        if(acx && acx.state==='suspended') await acx.resume();
-        await audio.play();
-        btnSound.hidden=true;
-      }
+      userOK=true;
+      if(!audio) buildAudio();
+      if(acx && acx.state==='suspended') await acx.resume();
+      await audio.play();
+      v1.play().catch(()=>{});
+      btnSound.hidden=true;
     }catch(e){ console.warn(e); }
   };
 
-  // ========= Calibración =========
+  // ====== Calibración ======
   if(!SHOW_CAL) document.getElementById('cal').style.display='none';
-  function applyAndShow(){ applyCal(); }
   document.querySelectorAll('#cal [data-act]').forEach(b=>{
     b.onclick=()=>{
       const stepPx=6, stepSc=0.005, stepRt=0.2;
@@ -467,9 +505,9 @@
       if(a==='dx-') CAL.dx-=stepPx; if(a==='dx+') CAL.dx+=stepPx;
       if(a==='dy-') CAL.dy-=stepPx; if(a==='dy+') CAL.dy+=stepPx;
       if(a==='sc-') CAL.scale=Math.max(0.9, CAL.scale-stepSc);
-      if(a==='sc+') CAL.scale=Math.min(1.3, CAL.scale+stepSc);
+      if(a==='sc+') CAL.scale=Math.min(1.2, CAL.scale+stepSc);
       if(a==='rt-') CAL.rot-=stepRt; if(a==='rt+') CAL.rot+=stepRt;
-      applyAndShow();
+      applyCal();
     };
   });
   document.getElementById('copyUrl').onclick=async()=>{
@@ -481,8 +519,10 @@
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch(e){ prompt('Copia la URL', url.toString()); }
   };
 
+  // estado cámara
   scene.addEventListener('arReady', ()=>say('Cámara OK'));
   scene.addEventListener('arError',  ()=>say('Error cámara/permisos'));
+
 })();
 </script>
 </body>
