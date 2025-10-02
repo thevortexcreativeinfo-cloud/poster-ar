@@ -3,31 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Poster AR · Universal</title>
-
-<!-- Libs -->
+<title>Poster AR · Universal (diagnosis)</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara en cover, detrás del WebGL */
   video[playsinline]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* WebGL por encima (permitimos click para el botón 3D) */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-
-  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.15;transition:opacity .35s}
-  .dbg:hover{opacity:1}
-
-  /* Calibración (oculta por defecto, abre con ?cal=1) */
+       padding:8px 10px;color:#cfe3ff;font:12px/1.35 system-ui;z-index:9;max-width:50ch;white-space:pre-wrap}
   .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
@@ -52,15 +42,13 @@
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1;"
   style="width:100vw;height:100vh">
 
-  <!-- Solo un vídeo; el src se pone tras cargar el JSON -->
   <a-assets timeout="60000" id="assets">
     <video id="v1" playsinline webkit-playsinline muted preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Cursor para poder hacer tap en objetos 3D con clase .ui3d -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -71,84 +59,96 @@
 <script>
 (async function(){
   const dbg = document.getElementById('dbg');
-  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]', m); };
-
   const qs = new URLSearchParams(location.search);
+  const DEBUG = qs.get('debug')==='1';
   const wantCal = qs.get('cal')==='1';
   if(wantCal) document.getElementById('cal').style.display='flex';
 
-  /* ===================== CARGA DE CONFIG ===================== */
-  // Fuentes:
-  // 1) ?cfg=URL (JSON directo)
-  // 2) ?api=APPS_SCRIPT&client=ID (Apps Script)
-  // 3) ?client=ID  -> ./cfg/ID.json (en el mismo repo/sitio)
-  async function fetchCfg(){
-    const cfgUrl = qs.get('cfg');
-    const api    = qs.get('api');
+  const say = (m)=>{ dbg.textContent = m; console.log('[AR]', m); };
+  const append = (m)=>{ dbg.textContent += '\n' + m; console.log('[AR]', m); };
+
+  /* ============== 1) CARGA DEL JSON ============== */
+  function cfgUrlFromQuery(){
+    const cfg = qs.get('cfg');
+    const api = qs.get('api');
     const client = qs.get('client');
-
-    let url = null;
-    if(cfgUrl){ url = cfgUrl; }
-    else if(api && client){ url = api + (api.includes('?')? '&':'?') + 'client=' + encodeURIComponent(client); }
-    else if(client){ url = 'cfg/' + encodeURIComponent(client) + '.json'; }
-    else {
-      throw new Error('Falta ?cfg= o ?api=&client=' + ' o ?client=');
-    }
-
-    const r = await fetch(url, {mode:'cors', cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const json = await r.json();
-    return json;
+    if(cfg) return {url: cfg, label:'cfg'};
+    if(api && client) return {url: api + (api.includes('?')?'&':'?') + 'client=' + encodeURIComponent(client), label:'api+client'};
+    if(client) return {url: 'cfg/' + encodeURIComponent(client) + '.json', label:'local cfg'};
+    return null;
   }
+  const src = cfgUrlFromQuery();
+  if(!src){ say('❗ Falta ?cfg= o ?api=&client= o ?client='); alert('Falta ?cfg= o ?api=&client= o ?client='); return; }
 
+  say('Cargando CFG ('+src.label+'): ' + src.url);
   let CFG;
   try{
-    CFG = await fetchCfg();
+    const r = await fetch(src.url, {mode:'cors', cache:'no-store'});
+    append('CFG → HTTP ' + r.status);
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    CFG = await r.json();
   }catch(e){
-    log('❗ No pude cargar el JSON: '+(e.message||e));
-    alert('No pude cargar el JSON de configuración.');
+    append('❗ Error leyendo JSON: ' + (e.message||e));
+    alert('No pude leer el JSON de configuración.\nMira el cuadro de diagnóstico.');
     return;
   }
 
-  // Defaults server-side seguros
+  // Validación mínima del esquema
+  const required = ['target','video','audio','slotVid','slotTitle','slotArtist','slotBar'];
+  const missing = required.filter(k => !(k in CFG));
+  if(missing.length){
+    append('❗ JSON incompleto. Faltan: ' + missing.join(', '));
+  } else {
+    append('CFG OK');
+  }
+  if(DEBUG) append('CFG.preview: ' + JSON.stringify(CFG).slice(0,280) + (JSON.stringify(CFG).length>280?'…':''));
+
+  /* ============== 2) COMPROBAR EL .MIND ============== */
+  try{
+    const r = await fetch(CFG.target, {mode:'cors', cache:'no-store'});
+    append('.mind → HTTP ' + r.status + (r.ok?' OK':' ❗'));
+    if(!r.ok) append('Posible problema de CORS o URL incorrecta.');
+  }catch(e){
+    append('❗ No pude descargar el .mind: ' + (e.message||e));
+  }
+
+  /* ============== 3) ESCENA / ANCLAJE ============== */
   const PW = +CFG.pw || 2481, PH = +CFG.ph || 3508, H = PH/PW;
   const COLORS = Object.assign({title:'#000000', artist:'#000000', wave1:'#13d77a', wave2:'#ffd54a'}, (CFG.colors||{}));
-  const SLOT_VID    = CFG.slotVid    || {x:296,y:316,w:1890,h:1682};
-  const SLOT_TITLE  = CFG.slotTitle  || {x:200,y:2150,w:2080,h:200};
-  const SLOT_ARTIST = CFG.slotArtist || {x:200,y:2330,w:2080,h:160};
-  const SLOT_BAR    = CFG.slotBar    || {x:300,y:2640,w:2060,h:26};
-  const SLOT_PLAY   = CFG.slotPlay   || null;
+  const SLOT_VID    = CFG.slotVid;
+  const SLOT_TITLE  = CFG.slotTitle;
+  const SLOT_ARTIST = CFG.slotArtist;
+  const SLOT_BAR    = CFG.slotBar;
+  const SLOT_PLAY   = CFG.slotPlay || null;
   const CAL = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
-  const AUTOPLAY_ON_DETECT = !!CFG.autoplay;   // si true, intentará sonar CUANDO DETECTA (no al abrir cámara)
+  const AUTOPLAY_ON_DETECT = !!CFG.autoplay;
   const PARALLAX = !!CFG.parallax;
 
-  /* ===================== MINDAR / ESCENA ===================== */
-  // Colocar el target del JSON
-  const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
-  // Forzar cámara del navegador a "cover" detrás
+  const scene = document.getElementById('scene');
+  scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{} });
+
+  // Poner la cámara nativa en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
-
   const anchor = document.getElementById('anchor');
-  const root   = document.createElement('a-entity'); anchor.appendChild(root);
+  const root = document.createElement('a-entity'); anchor.appendChild(root);
   root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
 
   function applyCal(){
     root.setAttribute('position', `${(CAL.dx||0)/PW} ${-(CAL.dy||0)/PW} 0`);
     root.setAttribute('scale', `${CAL.scale||1} ${CAL.scale||1} 1`);
     root.setAttribute('rotation', `0 0 ${CAL.rot||0}`);
-    const r = document.getElementById('readout');
-    if(r) r.textContent = `dx:${Math.round(CAL.dx||0)} dy:${Math.round(CAL.dy||0)} scale:${(CAL.scale||1).toFixed(3)} rot:${(CAL.rot||0)}`;
+    const rEl=document.getElementById('readout');
+    if(rEl) rEl.textContent=`dx:${Math.round(CAL.dx)} dy:${Math.round(CAL.dy)} scale:${(CAL.scale||1).toFixed(3)} rot:${(CAL.rot||0)}`;
   }
   applyCal();
 
-  // Vignette sutil para separar del entorno
+  // Vignette
   const vignette=document.createElement('a-plane');
   vignette.setAttribute('width', 1.12);
   vignette.setAttribute('height', H*1.12);
@@ -156,9 +156,8 @@
   vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
   root.appendChild(vignette);
 
-  /* ===================== VÍDEO ===================== */
-  const v1 = document.getElementById('v1');
-  v1.src = CFG.video || '';
+  /* ============== 4) VÍDEO del JSON ============== */
+  const v1 = document.getElementById('v1'); v1.src = CFG.video || '';
   const vs = px2(SLOT_VID.x,SLOT_VID.y,SLOT_VID.w,SLOT_VID.h);
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',vs.wn); vPlane.setAttribute('height',vs.hn);
@@ -177,7 +176,7 @@
   vPlane.addEventListener('materialtextureloaded', setVideoCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setVideoCover(); }, {once:true});
 
-  // Ken Burns muy suave (opcional pero bonito)
+  // Ken Burns
   function kenBurns(){
     const B=vPlane.__base; if(!B) return requestAnimationFrame(kenBurns);
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -188,11 +187,10 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ===================== CANVAS OVERLAY ===================== */
+  /* ============== 5) OVERLAY: TÍTULOS + BARRA ============== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
-
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
   overlayP.setAttribute('position','0 0 0.02');
@@ -208,77 +206,25 @@
   const titlePx = fitFont(CFG.title||'',  (SLOT_TITLE.w*Cw/PW),  (SLOT_TITLE.h*Ch/PH), 800);
   const artistPx= fitFont(CFG.artist||'', (SLOT_ARTIST.w*Cw/PW), (SLOT_ARTIST.h*Ch/PH), 600);
 
-  /* ===================== AUDIO ===================== */
-  const btnStart = document.getElementById('btnStart');
-  const btnAudio = document.getElementById('btnAudio');
+  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
-  let audio=null, acx=null, analyser=null, dataArr=null;
-  let targetVisible=false, allowAudio=false, lastBeat=0;
+  let audio=null, acx=null, analyser=null, dataArr=null, lastBeat=0;
 
   function setupAudioOnce(){
     if(audio) return;
     audio = new Audio(CFG.audio || '');
     audio.crossOrigin='anonymous';
     audio.preload='auto';
-    // WebAudio (si está disponible)
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC();
-      analyser=acx.createAnalyser(); analyser.fftSize=64;
+      acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64;
       dataArr=new Uint8Array(analyser.frequencyBinCount);
-      const src=acx.createMediaElementSource(audio);
-      src.connect(analyser); analyser.connect(acx.destination);
+      const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
     }catch(e){}
   }
 
-  // Botón audio (UI)
-  btnAudio.onclick = async ()=>{
-    setupAudioOnce();
-    try{
-      if(audio.paused){
-        allowAudio=true;
-        if(acx && acx.state==='suspended') await acx.resume();
-        await audio.play();
-        btnAudio.textContent='⏸ Audio';
-      }else{
-        audio.pause();
-        btnAudio.textContent='▶️ Audio';
-      }
-    }catch(e){}
-  };
-
-  // Botón play/pause 3D (invisible pero clicable donde quieras)
-  if(SLOT_PLAY){
-    const pb=px2(SLOT_PLAY.x,SLOT_PLAY.y,SLOT_PLAY.w,SLOT_PLAY.h);
-    const playBtn = document.createElement('a-circle');
-    playBtn.classList.add('ui3d');
-    playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible: solo zona de hit
-    playBtn.setAttribute('animation__tap','property:scale; from:0.94 0.94 1; to:1 1 1; dur:120; easing:easeOutQuad');
-    root.appendChild(playBtn);
-    playBtn.addEventListener('click', async()=>{
-      setupAudioOnce();
-      try{
-        if(audio.paused){
-          allowAudio=true;
-          if(acx && acx.state==='suspended') await acx.resume();
-          await audio.play();
-          btnAudio.textContent='⏸ Audio';
-        }else{
-          audio.pause();
-          btnAudio.textContent='▶️ Audio';
-        }
-        playBtn.emit('animation__tap'); navigator.vibrate?.(15);
-      }catch(e){}
-    });
-  }
-
-  /* ===================== DIBUJO (textos + barra + waveform) ===================== */
   const waveBars = CFG.waveBars || 48;
   const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
-
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function drawOverlay(){
     ctx.clearRect(0,0,Cw,Ch);
@@ -289,14 +235,14 @@
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-    ctx.fillStyle=COLORS.title;        ctx.fillText(CFG.title||'', tx+tw/2,   ty+th/2);
+    ctx.fillStyle=(COLORS.title);     ctx.fillText(CFG.title||'', tx+tw/2,   ty+th/2);
 
     // Artista
     const ax = Math.round(SLOT_ARTIST.x*Cw/PW), ay=Math.round(SLOT_ARTIST.y*Ch/PH),
           aw = Math.round(SLOT_ARTIST.w*Cw/PW), ah=Math.round(SLOT_ARTIST.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-    ctx.fillStyle=COLORS.artist;       ctx.fillText(CFG.artist||'', ax+aw/2,   ay+ah/2);
+    ctx.fillStyle=(COLORS.artist);    ctx.fillText(CFG.artist||'', ax+aw/2,   ay+ah/2);
 
     // Barra + tiempos
     const pbx=Math.round(SLOT_BAR.x*Cw/PW), pby=Math.round(SLOT_BAR.y*Ch/PH),
@@ -319,7 +265,7 @@
     ctx.textAlign='left';  ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`; ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble (arriba/abajo de la barra)
+    // Waveform doble
     const step=pbw/waveBars;
     const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
     let level=0;
@@ -345,7 +291,6 @@
   }
   requestAnimationFrame(drawOverlay);
 
-  // Partículas pequeñas para “beat”
   function burstParticles(color='#13d77a', count=8){
     for(let i=0;i<count;i++){
       const p=document.createElement('a-circle');
@@ -359,7 +304,6 @@
     }
   }
 
-  // Parallax opcional
   if(PARALLAX){
     (function parallaxTick(){
       if(scene?.camera){
@@ -372,59 +316,76 @@
     })();
   }
 
-  /* ===================== ESTADOS / BOTONES ===================== */
+  /* ============== 6) ESTADOS / BOTONES ============== */
   async function startAR(){
     try{
-      // Mejora de permisos: pedimos cámara antes de MindAR
-      const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      s.getTracks().forEach(t=>t.stop());
-    }catch(e){ /* si falla, MindAR igualmente pedirá */ }
+      // Pedimos permisos de cámara antes (mejor para iOS)
+      try{
+        const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+        s.getTracks().forEach(t=>t.stop());
+      }catch{}
 
-    try{
       const sys=scene.systems['mindar-image-system'];
       const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       document.getElementById('btnStart').disabled=true;
       document.getElementById('btnStart').textContent='Cámara lista';
-      log('Cámara iniciada');
+      say('Cámara iniciada');
     }catch(e){
-      log('❗ No se pudo iniciar MindAR');
+      say('❗ No se pudo iniciar MindAR: ' + (e.message||e));
     }
   }
-
   document.getElementById('btnStart').onclick = startAR;
-  // gesto global (facilita en iOS)
   window.addEventListener('pointerup', ()=>document.getElementById('btnStart').click(), {once:true,passive:true});
 
-  // target events
-  anchor.addEventListener('targetFound', async ()=>{
-    targetVisible=true; root.emit('pop',null,false);
-    v1.play().catch(()=>{});
-    document.getElementById('btnAudio').disabled = false;
+  // AUDIO UI
+  const btnAudio=document.getElementById('btnAudio');
+  btnAudio.onclick = async ()=>{
+    setupAudioOnce();
+    try{
+      if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
+      else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
+    }catch{}
+  };
 
-    // Autoplay SOLO al detectar (si está activado en el JSON)
-    if(AUTOPLAY_ON_DETECT){
+  // Área play/pause 3D (si hay slotPlay)
+  if(SLOT_PLAY){
+    const pb=px2(SLOT_PLAY.x,SLOT_PLAY.y,SLOT_PLAY.w,SLOT_PLAY.h);
+    const playBtn = document.createElement('a-circle');
+    playBtn.classList.add('ui3d');
+    playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
+    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
+    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
+    root.appendChild(playBtn);
+    playBtn.addEventListener('click', async()=>{
       setupAudioOnce();
       try{
-        allowAudio=true; // se permite porque el usuario ya tocó "Abrir cámara"
-        if(acx && acx.state==='suspended') await acx.resume();
-        await audio.play();
-        document.getElementById('btnAudio').textContent='⏸ Audio';
-      }catch(e){ /* si el navegador no deja, el botón ⏯ lo permitirá */ }
+        if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
+        else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
+        navigator.vibrate?.(15);
+      }catch{}
+    });
+  }
+
+  // Eventos del target
+  anchor.addEventListener('targetFound', async ()=>{
+    root.emit('pop',null,false);
+    document.getElementById('btnAudio').disabled=false;
+    say('✅ Target FOUND');
+    v1.play().catch(()=>{});
+
+    if(AUTOPLAY_ON_DETECT){
+      setupAudioOnce();
+      try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }catch{}
     }
-
-    log('Target FOUND');
   });
-
   anchor.addEventListener('targetLost', ()=>{
-    targetVisible=false;
-    v1.pause();
-    if(audio) audio.pause();
-    document.getElementById('btnAudio').textContent='▶️ Audio';
-    log('Target LOST…');
+    v1.pause(); if(audio) audio.pause();
+    btnAudio.textContent='▶️ Audio';
+    say('… Target LOST');
   });
 
-  // Calibración (si ?cal=1)
+  // Calibración
   if(wantCal){
     document.querySelectorAll('#cal [data-a]').forEach(b=>{
       b.onclick=()=>{
@@ -447,9 +408,9 @@
     };
   }
 
-  // Logs MindAR
-  scene.addEventListener('arReady', ()=>log('Cámara OK'));
-  scene.addEventListener('arError',  e=>log('Error cámara/permisos'));
+  // Señales MindAR
+  scene.addEventListener('arReady', ()=>append('Cámara OK'));
+  scene.addEventListener('arError',  e=>append('❗ arError: cámara/permisos'));
 })();
 </script>
 </body>
