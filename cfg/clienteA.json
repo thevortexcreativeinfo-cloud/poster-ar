@@ -1,0 +1,17 @@
+{
+  "target": "https://res.cloudinary.com/dtge9nklw/raw/upload/v1759401459/targets_12_j14r8e.mind",
+  "title": "Shape of You",
+  "artist": "Ed Sheeran",
+  "video": "https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4",
+  "audio": "https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3",
+  "colors": { "title": "#000000", "artist": "#000000", "wave1": "#13d77a", "wave2": "#ffd54a" },
+  "pw": 2481, "ph": 3508,
+  "slotVid":    { "x": 296,  "y": 316,  "w": 1890, "h": 1682 },
+  "slotTitle":  { "x": 200,  "y": 2150, "w": 2080, "h": 200 },
+  "slotArtist": { "x": 200,  "y": 2330, "w": 2080, "h": 160 },
+  "slotBar":    { "x": 300,  "y": 2640, "w": 2060, "h": 26 },
+  "slotPlay":   { "x": 1050, "y": 2920, "w": 380,  "h": 380 },
+  "cal": { "dx": -30, "dy": 432, "scale": 1.185, "rot": -0.2 },
+  "autoplay": true,
+  "parallax": false
+}
