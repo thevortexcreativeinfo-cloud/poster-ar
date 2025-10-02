@@ -13,28 +13,28 @@
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
-  /* WebGL delante */
+  /* WebGL delante (interactivo) */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
 
-  /* UI arriba del todo */
-  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9999;pointer-events:auto}
-  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:10px 12px}
+  /* UI */
+  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
+  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:9998;pointer-events:none;opacity:.25;transition:opacity .35s}
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
   .dbg:hover{opacity:1}
-  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9999}
+  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;z-index:9}
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
 <body>
 <div class="ui">
   <button id="btnStart" class="btn" type="button">📷 Abrir cámara</button>
-  <button id="btnAudio" class="btn" type="button" disabled>⏯ Audio</button>
+  <button id="btnAudio" class="btn" type="button" disabled>▶️ Audio</button>
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
-<!-- Calibración (oculta salvo ?cal=1) -->
+<!-- Controles de calibración (ocultos por defecto) -->
 <div class="cal" id="cal" style="display:none">
   <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
   <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
@@ -55,7 +55,7 @@
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Cursor para poder clickar elementos 3D si los usas -->
+  <!-- Cursor para poder hacer click/tap en elementos 3D -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
@@ -65,124 +65,68 @@
 
 <script>
 (async function(){
-  const dbg = document.getElementById('dbg');
-  const log = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.95; setTimeout(()=>dbg.style.opacity=.25,1200); };
   const qs = new URLSearchParams(location.search);
+  const dbg = document.getElementById('dbg');
+  const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); dbg.style.opacity=.9; setTimeout(()=>dbg.style.opacity=.16,1200); };
 
-  /* =============== CONFIG (client o cfg) =============== */
-  function cfgUrlFromQuery(){
-    const cfg = qs.get('cfg');
-    if (cfg) return cfg;
-    const client = qs.get('client');
-    if (client) {
-      const base = location.origin + (location.pathname.endsWith('/')? location.pathname : location.pathname.replace(/\/[^/]*$/,'/'));
-      return base + 'cfg/' + encodeURIComponent(client) + '.json';
-    }
-    return null;
-  }
-  const cfgUrl = cfgUrlFromQuery();
-  if(!cfgUrl){ log('❗ Falta ?cfg=URL o ?client=ID'); alert('Falta ?cfg=URL o ?client=ID'); return; }
-
+  /* ====== 1) Carga JSON de cliente ====== */
+  const cfgUrl = qs.get('cfg');
+  if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{
     const r = await fetch(cfgUrl, {mode:'cors', cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
     CFG = await r.json();
-    log('CFG OK');
-  }catch(e){ log('❗ No pude cargar el cfg: '+(e.message||e)); alert('No pude cargar el cfg: '+(e.message||e)); return; }
+  }catch(e){ alert('No pude cargar el JSON de cliente'); return; }
 
-  // Defaults básicos
-  CFG.pw ??= 2481; CFG.ph ??= 3508;
-  CFG.colors ??= { title:'#000000', artist:'#000000', wave1:'#13d77a', wave2:'#ffd54a' };
-  CFG.slotVid    ??= {x:296,y:316,w:1890,h:1682};
-  CFG.slotTitle  ??= {x:200,y:2150,w:2080,h:200};
-  CFG.slotArtist ??= {x:200,y:2330,w:2080,h:160};
-  CFG.slotBar    ??= {x:300,y:2640,w:2060,h:26};
-  CFG.cal ??= {dx:0,dy:0,scale:1,rot:0};
-  CFG.parallax = !!CFG.parallax;
-  CFG.autoplayOnFound = !!CFG.autoplayOnFound; // si quieres que arranque audio al detectar
-
-  /* =============== A-FRAME / MINDAR =============== */
+  /* ====== 2) Preparar escena/target ====== */
   const scene=document.getElementById('scene');
-  scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  scene.setAttribute('mindar-image',
+    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Cámara en cover detrás
+  // Cámara cover (cuando MindAR inyecta el <video> de la cámara)
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
-    if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'}); }
+    if(v.srcObject instanceof MediaStream){
+      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
+    }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  const PW=CFG.pw, PH=CFG.ph, H=PH/PW;
+  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
   const anchor=document.getElementById('anchor');
   const root=document.createElement('a-entity'); anchor.appendChild(root);
-  root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
 
-  function applyCal(){ const c=CFG.cal;
-    root.setAttribute('position', `${(c.dx||0)/PW} ${-(c.dy||0)/PW} 0`);
-    root.setAttribute('scale', `${c.scale||1} ${c.scale||1} 1`);
-    root.setAttribute('rotation', `0 0 ${c.rot||0}`);
-    document.getElementById('readout').textContent = `dx:${Math.round(c.dx||0)} dy:${Math.round(c.dy||0)} scale:${(c.scale||1).toFixed(3)} rot:${(c.rot||0)}`;
+  // Entrada “cinemática”
+  root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:enter');
+
+  // Calibración
+  const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
+  function applyCal(){
+    root.setAttribute('position', `${(cal.dx||0)/PW} ${-(cal.dy||0)/PW} 0`);
+    root.setAttribute('scale', `${cal.scale||1} ${cal.scale||1} 1`);
+    root.setAttribute('rotation', `0 0 ${cal.rot||0}`);
+    const ro = document.getElementById('readout');
+    if(ro) ro.textContent = `dx:${Math.round(cal.dx||0)} dy:${Math.round(cal.dy||0)} scale:${(cal.scale||1).toFixed(3)} rot:${(cal.rot||0)}`;
   }
   applyCal();
 
-  /* ======= Cartela blanca (fondo sólido) + sombra ======= */
-  // Fondo de la tarjeta (BLANCO sólido, nada translúcido)
-  const card=document.createElement('a-plane');
-  card.setAttribute('width', 1);
-  card.setAttribute('height', H);
-  card.setAttribute('position','0 0 0.00');
-  card.setAttribute('material','shader:flat; color:#FFFFFF; side:double; depthTest:true; transparent:false');
-  root.appendChild(card);
+  /* ====== 3) “Papel” blanco opaco (no translúcido) ====== */
+  const paper = document.createElement('a-plane');
+  paper.setAttribute('width', 1);
+  paper.setAttribute('height', H);
+  paper.setAttribute('position','0 0 -0.005'); // detrás de todo
+  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false; depthTest:false');
+  root.appendChild(paper);
 
-  // Sombra suave inferior para “flotar”
-  const shadow=document.createElement('a-plane');
-  shadow.setAttribute('width', 0.86);
-  shadow.setAttribute('height', H*0.05);
-  shadow.setAttribute('position', `0 ${-H*0.48} -0.01`);
-  shadow.setAttribute('rotation','-8 0 0');
-  shadow.setAttribute('material','shader:flat; color:#000; opacity:.16; transparent:true; side:double; depthTest:false');
-  root.appendChild(shadow);
-
-  /* ======= Marco 3D (bisel) + “light sweep” ======= */
-  // Marco fino negro (borde)
-  const border = document.createElement('a-plane');
-  border.setAttribute('width', 1.004); border.setAttribute('height', H*1.004);
-  border.setAttribute('position', '0 0 0.005');
-  border.setAttribute('material','shader:flat; color:#000; side:double; transparent:true; opacity:.08');
-  root.appendChild(border);
-  // Cuatro tiras simulando bisel (claras arriba/izq, oscuras abajo/der)
-  const bevel = [
-    {x:0,y:H/2+0.002,w:1,h:0.006,color:'#ffffff',op:.25},
-    {x:-0.5-0.002,y:0,w:0.006,h:H,color:'#ffffff',op:.22},
-    {x:0,y:-H/2-0.002,w:1,h:0.006,color:'#000000',op:.10},
-    {x:0.5+0.002,y:0,w:0.006,h:H,color:'#000000',op:.10},
-  ];
-  bevel.forEach(b=>{
-    const p=document.createElement('a-plane');
-    p.setAttribute('width', b.w); p.setAttribute('height', b.h);
-    p.setAttribute('position', `${b.x} ${b.y} 0.006`);
-    p.setAttribute('material',`shader:flat; color:${b.color}; opacity:${b.op}; transparent:true; side:double`);
-    root.appendChild(p);
-  });
-  // Light sweep alrededor (va rotando)
-  const sweep=document.createElement('a-plane');
-  sweep.setAttribute('width',1.02); sweep.setAttribute('height',H*1.02);
-  sweep.setAttribute('position','0 0 0.007');
-  sweep.setAttribute('material','shader:flat; color:#fff; opacity:0; transparent:true; side:double');
-  sweep.setAttribute('animation__blink','property:material.opacity; from:0; to:.18; dir:alternate; dur:380; loop:1; startEvents:go');
-  root.appendChild(sweep);
-  function triggerSweep(){ sweep.emit('go',null,false); setTimeout(triggerSweep, 3500+Math.random()*1500); }
-  setTimeout(triggerSweep, 2000);
-
-  /* ======= VÍDEO (limpio, sin oscurecer) ======= */
-  const v1=document.getElementById('v1'); v1.src = CFG.video || '';
+  /* ====== 4) Vídeo (sin filtros, por delante del overlay) ====== */
+  const v1=document.getElementById('v1'); v1.src = CFG.video||'';
   const vslot = CFG.slotVid;
-  const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
+  const uVid = px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.10`); /* delante de la cartela */
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; transparent:false; opacity:1');
+  vPlane.setAttribute('width',uVid.wn);
+  vPlane.setAttribute('height',uVid.hn);
+  vPlane.setAttribute('position',`${uVid.cx} ${uVid.cy} 0.06`); // más cerca de cámara que el overlay
+  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
   root.appendChild(vPlane);
 
   function setCover(){
@@ -190,33 +134,29 @@
     const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+    tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true;
     vPlane.__base = {ox,oy,rx,ry,tex};
   }
   vPlane.addEventListener('materialtextureloaded', setCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  // Ken Burns sutil
-  function kenBurns(){
-    const B=vPlane.__base; if(!B) return;
-    const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
-    const ox=Math.max(0, Math.min(1-B.rx, B.ox + dx));
-    const oy=Math.max(0, Math.min(1-B.ry, B.oy + dy));
-    B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
-    requestAnimationFrame(kenBurns);
-  }
-  requestAnimationFrame(kenBurns);
-
-  /* ======= OVERLAY CANVAS (textos + barra + waveform) ======= */
+  /* ====== 5) Overlay 2D (textos + barra) ====== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
+
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.12'); /* por encima del vídeo, pero sólo textos (transparente) */
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:true; opacity:1');
+  overlayP.setAttribute('position','0 0 0.0'); // detrás del vídeo
+  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
   root.appendChild(overlayP);
-  overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate = true; const mesh = overlayP.getObject3D('mesh'); mesh.material.map = tex; mesh.material.needsUpdate = true; overlayP.__tex = tex; });
+  overlayP.addEventListener('loaded', ()=>{
+    const tex = new AFRAME.THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    const mesh = overlayP.getObject3D('mesh');
+    mesh.material.map = tex; mesh.material.needsUpdate = true;
+    overlayP.__tex = tex;
+  });
 
   const titleSlot = CFG.slotTitle, artistSlot = CFG.slotArtist, barSlot = CFG.slotBar;
 
@@ -228,92 +168,93 @@
   const titlePx = fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx= fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ======= AUDIO + WAVEFORM MEJORADO ======= */
-  const btnStart = document.getElementById('btnStart');
-  const btnAudio = document.getElementById('btnAudio');
-
-  let audio=null, acx=null, analyser=null, freqArr=null, userGesture=false, targetVisible=false, wantPlay=false, lastBeat=0;
-  const bars = CFG.waveBars || 56;  // más barras
-  const barSmooth = new Array(bars).fill(0); // suavizado
+  /* ====== 6) Audio / Analyser ====== */
+  const btnAudio=document.getElementById('btnAudio');
+  let audio=null, acx=null, analyser=null, lastBeat=0;
 
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC(); analyser=acx.createAnalyser();
-      analyser.fftSize=128; freqArr=new Uint8Array(analyser.frequencyBinCount);
-      const src=acx.createMediaElementSource(audio);
-      src.connect(analyser); analyser.connect(acx.destination);
+      acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64;
+      const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
     }catch(e){}
   }
 
-  function updateAudioPlayback(){
-    if(!audio) return;
-    const shouldPlay = userGesture && targetVisible && wantPlay;
-    if(shouldPlay){
-      if(acx && acx.state==='suspended') acx.resume().catch(()=>{});
-      if(audio.paused) audio.play().catch(()=>{});
-      btnAudio.textContent='⏸ Audio';
-    }else{
-      if(!audio.paused) audio.pause();
-      btnAudio.textContent='▶️ Audio';
-    }
-  }
-
-  // Botón Audio (click + touch)
-  const onAudioToggle = (e)=>{
-    e.preventDefault(); e.stopPropagation();
-    userGesture=true; setupAudio();
-    wantPlay = !(audio && !audio.paused);
-    updateAudioPlayback();
+  btnAudio.onclick=async()=>{
+    setupAudio();
+    try{
+      if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
+      else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
+    }catch{}
   };
-  btnAudio.addEventListener('click', onAudioToggle, {passive:false});
-  btnAudio.addEventListener('touchend', onAudioToggle, {passive:false});
 
-  // Área AR play/pause opcional si tu JSON trae slotPlay (si no, se omite)
+  /* ====== 7) Play/Pause táctil en el póster ====== */
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const playBtn = document.createElement('a-circle');
     playBtn.classList.add('ui3d');
     playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.13`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible: sólo hit
+    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.09`);
+    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true'); // invisible (hit-area)
     playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
     root.appendChild(playBtn);
-    playBtn.addEventListener('click', (e)=>{
-      userGesture=true; setupAudio();
-      wantPlay = !(audio && !audio.paused);
-      playBtn.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);
-      updateAudioPlayback();
+    playBtn.addEventListener('click', async()=>{
+      setupAudio();
+      try{
+        if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
+        else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
+        playBtn.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);
+      }catch(e){}
     });
+
+    // Aro 3D reactivo alrededor del play
+    const ring = document.createElement('a-torus');
+    ring.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.2);
+    ring.setAttribute('radius-tubular', 0.004);
+    ring.setAttribute('rotation','90 0 0');
+    ring.setAttribute('position', `${pb.cx} ${pb.cy} 0.085`);
+    ring.setAttribute('material','shader:standard; metalness:0; roughness:1; emissive:#13d77a; emissiveIntensity:0.0; color:#13d77a; transparent:true; opacity:.85');
+    ring.setAttribute('animation__breath','property:scale; from:0.98 0.98 0.98; to:1.02 1.02 1.02; dur:1200; easing:easeInOutSine; dir:alternate; loop:true');
+    root.appendChild(ring);
+    // guardamos para subir emissive con el beat
+    overlayP.__ring = ring;
   }
 
-  /* ======= DIBUJO (textos + barra + waveform) ======= */
-  const waveTopHeight = Math.round(40*Cw/2048), waveGap = Math.round(28*Cw/2048);
+  /* ====== 8) Barras 3D audio-reactivas ====== */
+  const bars3D = [];
+  (function makeBars3D(){
+    const n = 24;
+    const pbx = barSlot.x, pby = barSlot.y, pbw = barSlot.w, pbh = barSlot.h;
+    const boxWn = (pbw/PW)/n, cx = -0.5 + (pbx + pbw/2)/PW, cy = H/2 - (pby + pbh + (24/PW)*Cw/2048)/PW; // un poco por debajo de la barra
+    const depth = 0.01;
+    for(let i=0;i<n;i++){
+      const b=document.createElement('a-box');
+      b.setAttribute('width', boxWn*0.8);
+      b.setAttribute('height', 0.002);
+      b.setAttribute('depth', depth);
+      b.setAttribute('position', `${cx - (pbw/PW)/2 + (i+0.5)*boxWn} ${cy} 0.11`);
+      b.setAttribute('material','shader:standard; color:#13d77a; emissive:#13d77a; emissiveIntensity:0.25; roughness:1; metalness:0');
+      root.appendChild(b);
+      bars3D.push(b);
+    }
+  })();
+
+  /* ====== 9) Dibujo del overlay (textos + barra 2D) ====== */
+  const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
-
-  function roundedRect(x,y,w,h,r){
-    ctx.beginPath();
-    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
-    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
-    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
-    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
-  }
 
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título + shimmer
+    // Título
     const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
-    const g1=ctx.createLinearGradient(tx,ty, tx+tw,ty); const off=(performance.now()*0.06)%tw;
-    g1.addColorStop(Math.max(0,(off-140)/tw),'rgba(255,255,255,0)'); g1.addColorStop(Math.max(0,(off-70)/tw),'rgba(255,255,255,.55)'); g1.addColorStop(Math.min(1,(off)/tw),'rgba(255,255,255,0)');
-    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=g1; ctx.fillRect(tx,ty,tw,th); ctx.restore();
 
     // Artista
     const ax = Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
@@ -322,20 +263,19 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra (con bordes redondeados)
+    // Barra de progreso con degradado
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
-          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(4,Math.round(barSlot.h*Ch/PH));
-    ctx.fillStyle='rgba(0,0,0,0.14)';
-    roundedRect(pbx, pby+2, pbw, pbh, Math.round(pbh/2)); ctx.fill();
-    ctx.fillStyle='#000';
-    roundedRect(pbx, pby, pbw, pbh, Math.round(pbh/2)); ctx.fill();
+          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
+    ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
+    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
     const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
-    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a')); grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
-    ctx.fillStyle=grad; roundedRect(pbx, pby, fw, pbh, Math.round(pbh/2)); ctx.fill();
+    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
+    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
     // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
@@ -345,65 +285,66 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Waveform doble con suavizado (attack/decay) y gradiente por barra
-    const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
-    let level=0, arr=null;
-    if(analyser && (arr=freqArr)) analyser.getByteFrequencyData(arr);
-
-    const nBars = bars;
-    const step = pbw / nBars;
-    for(let i=0;i<nBars;i++){
-      // valor fuente
-      let raw = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-      if(arr){ raw = (arr[2+i]||0)/255; }
-      // suavizado: attack rápido, decay lento
-      const prev = barSmooth[i];
-      const target = raw;
-      const atk = 0.55, dec = 0.12;
-      const val = (target>prev) ? (prev*(1-atk)+target*atk) : (prev*(1-dec)+target*dec);
-      barSmooth[i] = val;
-      level += val;
-
-      const h = Math.max(4, Math.round(val*waveTopHeight));
-      const x = Math.round(pbx + i*step + step*0.18);
-      const w = Math.max(3, Math.round(step*0.64));
-
-      // gradiente vertical por barra
-      const gTop = ctx.createLinearGradient(0, byTop-h, 0, byTop);
-      gTop.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
-      gTop.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
-      const gBot = ctx.createLinearGradient(0, byBot, 0, byBot+h);
-      gBot.addColorStop(0, (CFG.colors?.wave2||'#ffd54a'));
-      gBot.addColorStop(1, (CFG.colors?.wave1||'#13d77a'));
-
-      // superior
-      ctx.fillStyle=gTop; ctx.fillRect(x, byTop-h, w, h);
-      // inferior (espejo)
-      ctx.fillStyle=gBot; ctx.fillRect(x, byBot, w, h);
-    }
-    if(arr){ level/=nBars; const now=performance.now(); if(level>0.52 && now-lastBeat>220){ lastBeat=now; burstParticles('#ffd54a', 8); } }
-
+    // Señal al texture
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  /* ======= Partículas (por detrás del vídeo) ======= */
-  function burstParticles(color='#13d77a', count=8){
-    for(let i=0;i<count;i++){
-      const p=document.createElement('a-circle');
-      p.setAttribute('radius', 0.006 + Math.random()*0.012);
-      p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
-      // IMPORTANTE: Z por detrás del vídeo (vídeo en 0.10 -> partículas en 0.04)
-      p.setAttribute('position', `${(Math.random()-0.5)*0.28} ${-H*0.18 + Math.random()*0.12} 0.04`);
-      const dy = 0.22 + Math.random()*0.25, dx = (Math.random()-0.5)*0.25, dur = 900 + Math.random()*700;
-      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.18+dy} 0.04; dur:${dur}; easing:easeOutQuad`);
-      p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
-      root.appendChild(p); setTimeout(()=>p.remove(), dur+80);
+  /* ====== 10) Animación de barras 3D + ring con el beat ====== */
+  function audioTick(){
+    if(!analyser){ requestAnimationFrame(audioTick); return; }
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+    let level=0;
+    for(let i=0;i<bars3D.length;i++){
+      const v = (data[i+2]||0)/255;
+      level += v;
+      const h = 0.01 + v*0.08; // altura
+      bars3D[i].setAttribute('scale', `1 ${h/0.002} 1`);
     }
+    level /= bars3D.length;
+    if(overlayP.__ring){
+      const ei = 0.15 + level*0.9;
+      overlayP.__ring.setAttribute('material', 'emissiveIntensity', ei);
+    }
+    requestAnimationFrame(audioTick);
   }
+  requestAnimationFrame(audioTick);
 
-  /* ======= Parallax suave (opcional) ======= */
+  /* ====== 11) Marco que se “dibuja” al entrar ====== */
+  (function frameDraw(){
+    const pad = 0.02, thick=0.004;
+    const sides = [
+      {pos:`0 ${H/2-pad} 0.001`,  wh:`1 ${thick}`, axis:'x'}, // top
+      {pos:`${0.5-pad} 0 0.001`, wh:`${thick} ${H}`, axis:'y'}, // right
+      {pos:`0 ${-H/2+pad} 0.001`,wh:`1 ${thick}`, axis:'x'}, // bottom
+      {pos:`${-0.5+pad} 0 0.001`,wh:`${thick} ${H}`, axis:'y'}, // left
+    ];
+    sides.forEach((s,i)=>{
+      const p=document.createElement('a-plane');
+      p.setAttribute('position', s.pos);
+      const [w,h]=s.wh.split(' ');
+      p.setAttribute('width', w); p.setAttribute('height', h);
+      p.setAttribute('material','shader:flat; color:#000; transparent:true; opacity:.9; side:double; depthTest:false');
+      p.setAttribute('scale', s.axis==='x' ? '0 1 1' : '1 0 1');
+      p.setAttribute('animation__draw', `property:scale; to:1 1 1; dur:320; delay:${80*i}; easing:easeOutQuad; startEvents:enter`);
+      root.appendChild(p);
+    });
+  })();
+
+  /* ====== 12) Ken Burns suave ====== */
+  function kenBurns(){
+    const B=vPlane.__base; if(!B){ requestAnimationFrame(kenBurns); return; }
+    const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
+    const ox=Math.max(0, Math.min(1-B.rx, B.ox + dx));
+    const oy=Math.max(0, Math.min(1-B.ry, B.oy + dy));
+    B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
+    requestAnimationFrame(kenBurns);
+  }
+  requestAnimationFrame(kenBurns);
+
+  /* ====== 13) Parallax opcional ====== */
   if(CFG.parallax){
     (function parallaxTick(){
       if(scene?.camera){
@@ -416,70 +357,64 @@
     })();
   }
 
-  /* =============== ESTADOS / UI =============== */
-  // Calibración visible con ?cal=1
-  const calBox = document.getElementById('cal');
-  calBox.style.display = (qs.get('cal')==='1' ? 'flex' : 'none');
+  /* ====== 14) Estados / UI ====== */
+  // Mostrar calibración si ?cal=1
+  document.getElementById('cal').style.display = (qs.get('cal')==='1' ? 'flex' : 'none');
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
-      const s=6, sc=0.005, rt=0.2, a=b.dataset.a, c=CFG.cal;
-      if(a==='dx-') c.dx-=s; if(a==='dx+') c.dx+=s;
-      if(a==='dy-') c.dy-=s; if(a==='dy+') c.dy+=s;
-      if(a==='sc-') c.scale=Math.max(0.9,c.scale-sc);
-      if(a==='sc+') c.scale=Math.min(1.3,c.scale+sc);
-      if(a==='rt-') c.rot-=rt; if(a==='rt+') c.rot+=rt;
+      const s=6, sc=0.005, rt=0.2, a=b.dataset.a;
+      if(a==='dx-') cal.dx-=s; if(a==='dx+') cal.dx+=s;
+      if(a==='dy-') cal.dy-=s; if(a==='dy+') cal.dy+=s;
+      if(a==='sc-') cal.scale=Math.max(0.9, cal.scale-sc);
+      if(a==='sc+') cal.scale=Math.min(1.3, cal.scale+sc);
+      if(a==='rt-') cal.rot-=rt; if(a==='rt+') cal.rot+=rt;
       applyCal();
     };
   });
   document.getElementById('copyUrl').onclick=async()=>{
     const url=new URL(location.href);
-    const c=CFG.cal;
-    url.searchParams.set('dx', Math.round(c.dx||0));
-    url.searchParams.set('dy', Math.round(c.dy||0));
-    url.searchParams.set('scale', +(c.scale||1).toFixed(3));
-    url.searchParams.set('rot', +(c.rot||0).toFixed(1));
+    url.searchParams.set('dx', Math.round(cal.dx||0));
+    url.searchParams.set('dy', Math.round(cal.dy||0));
+    url.searchParams.set('scale', +(cal.scale||1).toFixed(3));
+    url.searchParams.set('rot', +(cal.rot||0).toFixed(1));
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
-  // Arranque de cámara robusto (CLICK y TOUCH)
-  async function startCamera(){
+  // Arranque robusto (pide permiso primero)
+  const btnStart=document.getElementById('btnStart');
+  btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true; btnStart.textContent='Pidiendo cámara…';
+      btnStart.disabled = true;
+      say('Pidiendo cámara…');
       const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
+      say('Permisos OK. Iniciando MindAR…');
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       btnStart.textContent='Cámara lista';
-      btnAudio.disabled=false;
-      log('Cámara iniciada');
     }catch(e){
-      btnStart.disabled=false; btnStart.textContent='📷 Abrir cámara';
-      log('❗ No se pudo abrir cámara: '+(e.message||e));
+      say('No se pudo iniciar cámara'); btnStart.disabled=false;
     }
-  }
-  const onStartTap = (e)=>{ e.preventDefault(); e.stopPropagation(); userGesture=true; startCamera(); };
-  btnStart.addEventListener('click', onStartTap, {passive:false});
-  btnStart.addEventListener('touchend', onStartTap, {passive:false});
+  };
 
   anchor.addEventListener('targetFound', ()=>{
-    targetVisible=true; root.emit('pop',null,false);
+    root.emit('enter',null,false);
     v1.play().catch(()=>{});
-    if(CFG.autoplayOnFound){ setupAudio(); wantPlay = true; }
-    updateAudioPlayback();
-    log('Target FOUND');
+    btnAudio.disabled=false;
+    // Si quieres auto-audio al detectar y el usuario ya tocó “Abrir cámara”:
+    if(CFG.autoplay){
+      setupAudio();
+      audio.play().then(()=>{ btnAudio.textContent='⏸ Audio'; }).catch(()=>{});
+    }
+    say('Target FOUND');
   });
-  anchor.addEventListener('targetLost', ()=>{
-    targetVisible=false;
-    v1.pause();
-    updateAudioPlayback();
-    log('Target LOST…');
+  anchor.addEventListener('targetLost',  ()=>{
+    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio';
+    say('Target LOST…');
   });
 
-  scene.addEventListener('arReady', ()=>log('Cámara OK'));
-  scene.addEventListener('arError',  ()=>log('Error cámara/permisos'));
-
-  // Seguridad: primer toque intenta abrir la cámara
-  window.addEventListener('pointerup', (e)=>{ if(!btnStart.disabled) onStartTap(e); }, {once:true,passive:false});
+  // Primera interacción automática para iOS/Android (mejor UX)
+  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
 </body>
