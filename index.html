@@ -37,7 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Sin src para evitar CORS; el src real lo pone el JS desde CFG.video -->
+    <!-- sin src inicial para evitar about:blank/CORS; se asigna desde JS -->
     <video id="v1" playsinline webkit-playsinline muted preload="metadata" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -63,18 +63,19 @@
     });
   }
 
-  /* ========== Cargar JSON de configuración ========== */
+  /* -------- Cargar CFG -------- */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ========== MindAR ========== */
+  /* -------- MindAR + cámara de fondo -------- */
   const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image',
+  scene.setAttribute('mindar-image', 
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
+  // asegura la cámara del dispositivo en cover al fondo
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -91,14 +92,14 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ========== Fondo del póster ========== */
+  /* -------- Fondo póster -------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ========== Marco animado bonito ========== */
+  /* -------- Marco animado elegante -------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const glow1 = CFG.colors?.wave1 || '#13d77a';
   const glow2 = CFG.colors?.wave2 || '#ffd54a';
@@ -128,11 +129,11 @@
     });
   })();
 
-  /* ========== VÍDEO centrado (sin desplazamientos) ========== */
+  /* -------- Vídeo centrado y fijo (sin desplazamientos) -------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';  // tu Cloudinary MP4
+  if (CFG.video) { v1.src = CFG.video; }   // p.ej. tu Cloudinary MP4
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -152,14 +153,27 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  /* ========== Canvas overlay (textos + barra musical) ========== */
+  // Fallback por si alguna plataforma deja el material sin map (vídeo negro)
+  function forceThreeVideoTexture(){
+    const mesh=vPlane.getObject3D('mesh'); if(!mesh) return;
+    if(!mesh.material.map && v1.readyState>=2){
+      const tex=new AFRAME.THREE.VideoTexture(v1);
+      tex.needsUpdate=true;
+      mesh.material.map=tex; mesh.material.needsUpdate=true;
+      coverFromMap(tex);
+      log('VideoTexture forzada (fallback)');
+    }
+  }
+  v1.addEventListener('playing', forceThreeVideoTexture);
+
+  /* -------- Overlay (títulos + barra musical PRO) -------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
+  overlay.setAttribute('position','0 0 0.0');           // debajo del vídeo
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlay); setRO(overlay, 3, false, false);
   overlay.addEventListener('loaded', ()=>{
@@ -202,7 +216,7 @@
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título y artista
+    // Título / artista
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -286,7 +300,7 @@
   }
   requestAnimationFrame(draw);
 
-  /* ========== Corazones con física + drag (zona inferior) ========== */
+  /* -------- Corazones con física + drag (parte inferior) -------- */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
   const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
@@ -365,11 +379,8 @@
     requestAnimationFrame(heartsTick);
   })();
 
-  /* ========== START DEL BOTÓN — ROBUSTO ========== */
-  async function waitSceneLoaded(){
-    if(scene.hasLoaded) return;
-    await new Promise(res=>scene.addEventListener('loaded', res, {once:true}));
-  }
+  /* -------- Botón de inicio robusto -------- */
+  async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(res=>scene.addEventListener('loaded', res, {once:true})); }
   async function waitMindARReady(){
     if(scene.components['mindar-image']) return;
     await new Promise(res=>{
@@ -415,7 +426,7 @@
   });
   anchor.addEventListener('targetLost', ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…'); });
 
-  // Arranque también con el primer gesto (iOS)
+  // arranque adicional con primer gesto (iOS)
   window.addEventListener('pointerdown', ()=>{ if(!scene?.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
