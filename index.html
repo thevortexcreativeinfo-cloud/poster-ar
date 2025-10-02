@@ -48,10 +48,8 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <!-- base del póster sin texto/foto -->
     <img id="base" crossorigin="anonymous"
          src="https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png">
-    <!-- vídeo del marco -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"
            src="https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4"></video>
   </a-assets>
@@ -76,27 +74,20 @@
   const titleCol  = '#'+(qs.get('tc1')||'000000');
   const artistCol = '#'+(qs.get('tc2')||'000000');
 
-  // Tamaño del arte base
   const PW=2481, PH=3508, H=PH/PW;
-
-  // Rectángulo del vídeo (en px del póster)
   const SLOT = {x:296, y:316, w:1890, h:1682};
-
-  // Textos y elementos (en px del póster)
   const TITLE = {x:200, y:2150, w:2080, h:190};
   const ARTIST= {x:200, y:2330, w:2080, h:150};
-  const PB    = {x:300, y:2640, w:2060, h:26};          // barra más alta
+  const PB    = {x:300, y:2640, w:2060, h:26};
   const TIME_L= {x:300, y:2680, w:160, h:40};
   const TIME_R= {x:2060, y:2680, w:300, h:40};
 
-  // Calibración
   const CAL = {
     dx: +(qs.get('dx')||-30),
     dy: +(qs.get('dy')||252),
     scale: +(qs.get('scale')||1.1),
     rot: +(qs.get('rot')||-0.6)
   };
-
   const PARALLAX = qs.get('parallax')==='1';
 
   // ===== A-Frame / MindAR =====
@@ -122,7 +113,7 @@
 
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
-  // ===== Vignette + sombra elíptica =====
+  // ===== Vignette + sombra =====
   const vignette=document.createElement('a-plane');
   vignette.setAttribute('width', 1.16);
   vignette.setAttribute('height', H*1.16);
@@ -138,7 +129,7 @@
   shadow.setAttribute('material','shader:flat; color:#000; opacity:.18; transparent:true; side:double; depthTest:false');
   root.appendChild(shadow);
 
-  // ===== Canvas overlay (textos y FX 2D) =====
+  // ===== Canvas overlay (progreso, waveform, efectos) =====
   const baseImg = document.getElementById('base');
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
@@ -146,7 +137,7 @@
 
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.0');                    // detrás del vídeo
+  overlayP.setAttribute('position','0 0 0.00');     // DETRÁS del vídeo/texto
   overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
   overlayP.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:380; easing:easeOutQuad; startEvents:show');
   root.appendChild(overlayP);
@@ -159,16 +150,16 @@
     overlayP.__tex = tex;
   });
 
-  // ===== Vídeo limpio por DELANTE del overlay (fix blanco) =====
+  // ===== Vídeo POR DELANTE =====
   const v1=document.getElementById('v1');
   const u = px2(SLOT.x,SLOT.y,SLOT.w,SLOT.h);
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);          // Z adelantado
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);
   vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; transparent:false; opacity:1');
   root.appendChild(vPlane);
 
-  function setCoverAndBase(){
+  function setCover(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
     const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=SLOT.w/SLOT.h;
     let rx=1,ry=1,ox=0,oy=0;
@@ -176,11 +167,28 @@
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
     vPlane.__base = {ox,oy,rx,ry,tex};
   }
-  vPlane.addEventListener('materialtextureloaded', setCoverAndBase);
-  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCoverAndBase(); }, {once:true});
+  vPlane.addEventListener('materialtextureloaded', setCover);
+  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
+
+  // ===== Texto 3D (fiable) por ENCIMA =====
+  function text3D(value, slot, color, weight){
+    const g=px2(slot.x,slot.y,slot.w,slot.h);
+    const e=document.createElement('a-entity');
+    e.setAttribute('position', `${g.cx} ${g.cy} 0.16`);
+    e.setAttribute('text', `value:${value}; align:center; anchor:center; color:${color}; width:${g.wn}; wrapCount:40; baseline:center;`);
+    e.setAttribute('animation__fade','property:opacity; from:0; to:1; dur:320; easing:easeOutQuad; startEvents:show');
+    // pequeño pop
+    e.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:260; easing:easeOutQuad; startEvents:show');
+    root.appendChild(e);
+    // ajusta tamaño con un factor respecto a la altura del slot (msdf usa "width")
+    e.setAttribute('scale', `${Math.min(1.2, slot.w/slot.h/7)} ${Math.min(1.2, slot.w/slot.h/7)} 1`);
+    return e;
+  }
+  const title3d  = text3D(titleTxt,  TITLE,  titleCol, 800);
+  const artist3d = text3D(artistTxt, ARTIST, artistCol, 600);
 
   // ===== Audio + analyser =====
-  let audio=null, userOK=false, acx=null, analyser=null, dataArr=null;
+  let audio=null, userOK=false, acx=null, analyser=null;
   let lastBeat=0;
 
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -191,11 +199,11 @@
       const p=document.createElement('a-circle');
       p.setAttribute('radius', 0.006 + Math.random()*0.01);
       p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
-      p.setAttribute('position', `${(Math.random()-0.5)*0.3} ${-H*0.20 + Math.random()*0.08} 0.13`);
+      p.setAttribute('position', `${(Math.random()-0.5)*0.3} ${-H*0.20 + Math.random()*0.08} 0.18`);
       const dy = 0.18 + Math.random()*0.22;
       const dx = (Math.random()-0.5)*0.25;
       const dur = 900 + Math.random()*600;
-      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.20+dy} 0.13; dur:${dur}; easing:easeOutQuad`);
+      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.20+dy} 0.18; dur:${dur}; easing:easeOutQuad`);
       p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
       p.setAttribute('animation__scale', `property:scale; from:0.8 0.8 1; to:1.4 1.4 1; dur:${dur}`);
       root.appendChild(p);
@@ -203,52 +211,18 @@
     }
   }
 
-  // ===== Dibujo del overlay (textos + barra + waveform) =====
+  // ===== Dibujo canvas (base, barra, waveform) =====
   let t0=performance.now(), sweepT=0;
-  const bars=48; // más denso
-
-  function fitFontFor(text, wpx, hpx, weight){
-    let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.75);
-    while(lo<=hi){
-      const mid=(lo+hi>>1);
-      ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
-      if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1;
-    }
-    return best;
-  }
-  const titlePx = fitFontFor(titleTxt, TITLE.w*Cw/PW, TITLE.h*Ch/PH, 800);
-  const artistPx= fitFontFor(artistTxt, ARTIST.w*Cw/PW, ARTIST.h*Ch/PH, 600);
+  const bars=48;
 
   function drawOverlay(){
     const now = performance.now(); const dt = (now - t0)/1000; t0 = now; sweepT += dt;
 
-    // base (sin pantallazo blanco si no cargó)
+    // base (si no cargó: limpiar, no blanco opaco)
     if(baseImg.complete) ctx.drawImage(baseImg, 0, 0, Cw, Ch);
     else ctx.clearRect(0,0,Cw,Ch);
 
-    // título con shimmer
-    const tx = Math.round(TITLE.x*Cw/PW), ty=Math.round(TITLE.y*Ch/PH),
-          tw = Math.round(TITLE.w*Cw/PW), th=Math.round(TITLE.h*Ch/PH);
-    const off = (now*0.06)%tw;
-    const grad = ctx.createLinearGradient(tx,ty, tx+tw,ty);
-    grad.addColorStop(Math.max(0,(off-140)/tw),'rgba(255,255,255,0)');
-    grad.addColorStop(Math.max(0,(off-70)/tw), 'rgba(255,255,255,.65)');
-    grad.addColorStop(Math.min(1,(off)/tw),     'rgba(255,255,255,0)');
-
-    ctx.fillStyle=titleCol; ctx.textBaseline='middle'; ctx.textAlign='center';
-    ctx.shadowColor='rgba(0,0,0,0.26)'; ctx.shadowBlur=Math.floor(th*.06); ctx.shadowOffsetY=Math.floor(th*.03);
-    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(titleTxt, tx+tw/2, ty+th/2);
-    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=grad; ctx.fillRect(tx, ty, tw, th); ctx.restore();
-
-    // artista
-    const ax = Math.round(ARTIST.x*Cw/PW), ay=Math.round(ARTIST.y*Ch/PH),
-          aw = Math.round(ARTIST.w*Cw/PW), ah=Math.round(ARTIST.h*Ch/PH);
-    ctx.shadowColor='rgba(0,0,0,0.18)'; ctx.shadowBlur=Math.floor(ah*.05); ctx.shadowOffsetY=Math.floor(ah*.02);
-    ctx.fillStyle=artistCol; ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(artistTxt, ax+aw/2, ay+ah/2);
-
-    // barra y tiempos
+    // barra + tiempos
     const pbx=Math.round(PB.x*Cw/PW), pby=Math.round(PB.y*Ch/PH),
           pbw=Math.round(PB.w*Cw/PW), pbh=Math.max(2,Math.round(PB.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
@@ -259,110 +233,68 @@
     const fw = Math.max(2, Math.floor(pbw*p));
     ctx.fillStyle='#13d77a'; ctx.fillRect(pbx, pby, fw, pbh);
 
-    // knob con pulso
+    // knob
     const kx = pbx + fw; const ky = pby + pbh/2;
     const baseR = Math.max(3, Math.round(pbh*0.9/2));
     const pulse = 1 + 0.10*Math.sin(now/220);
     ctx.beginPath(); ctx.arc(kx,ky,baseR*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
 
     // tiempos
-    ctx.shadowColor='transparent';
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
     ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
     ctx.fillText(cur, Math.round(TIME_L.x*Cw/PW), Math.round((TIME_L.y+TIME_L.h)*Ch/PH));
     ctx.textAlign='right';
     ctx.fillText(dur, Math.round((TIME_R.x+TIME_R.w)*Cw/PW), Math.round((TIME_R.y+TIME_R.h)*Ch/PH));
 
-    // waveform (grande, espejo, gradiente y glow)
-    const bx=pbx, bw=pbw;
-    const bh=Math.round(28*Cw/2048);                     // más alto
-    const gap=Math.round(22*Cw/2048);
-    const byTop  = pby - gap - bh;                        // arriba de la barra
-    const byBottom = pby + pbh + gap;                     // debajo (espejo)
-    // datos del analyser una sola vez por frame
-    let level=0; let arr=null;
-    if(analyser){ arr = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); }
+    // waveform grande (arriba y abajo)
+    const bw=pbw, bh=Math.round(28*Cw/2048), gap=Math.round(22*Cw/2048);
+    const byTop  = pby - gap - bh;
+    const byBottom = pby + pbh + gap;
 
     function barColor(v){
-      // verde -> amarillo -> coral según energía
       const g = Math.min(1, Math.max(0, v));
-      if(g<0.5){ // 0..0.5  #13d77a -> #ffd54a
-        const t=g/0.5; const r=0x13 + (0xff-0x13)*t, gr=0xd7 + (0xd5-0xd7)*t, b=0x7a + (0x4a-0x7a)*t;
+      if(g<0.5){ const t=g/0.5; const r=0x13 + (0xff-0x13)*t, gr=0xd7 + (0xd5-0xd7)*t, b=0x7a + (0x4a-0x7a)*t;
         return `rgb(${r|0},${gr|0},${b|0})`;
-      }else{     // 0.5..1  #ffd54a -> #ff6d6d
-        const t=(g-0.5)/0.5; const r=0xff, gr=0xd5 + (0x6d-0xd5)*t, b=0x4a + (0x6d-0x4a)*t;
+      }else{ const t=(g-0.5)/0.5; const r=0xff, gr=0xd5 + (0x6d-0xd5)*t, b=0x4a + (0x6d-0x4a)*t;
         return `rgb(${r},${gr|0},${b|0})`;
       }
     }
 
+    const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
+    if(arr) analyser.getByteFrequencyData(arr);
+    let level=0;
+
     function paintWave(yBase, mirror=false){
-      ctx.save(); ctx.translate(bx, yBase + (mirror?0:bh)); // arriba dibuja desde yBase+bh hacia arriba
+      ctx.save(); ctx.translate(pbx, yBase + (mirror?0:bh));
       const step=bw/bars;
       for(let i=0;i<bars;i++){
-        let v = 0.25 + 0.75*Math.abs(Math.sin((now/260)+(i*0.37))); // fallback
-        if(arr){ v = (arr[2+i]||0)/255; level += v; }
+        let v = 0.25 + 0.75*Math.abs(Math.sin((now/260)+(i*0.37)));
+        if(arr){ v = (arr[2+i]||0)/255; level+=v; }
         const h = Math.max(3, Math.round(v*bh));
         const x = Math.round(i*step + step*0.18);
         const w = Math.max(2,Math.round(step*0.64));
         ctx.fillStyle=barColor(v);
-        if(mirror){ // abajo hacia abajo
-          ctx.fillRect(x, 0, w, h);
-          ctx.globalAlpha=0.25; ctx.fillRect(x, 0, w, 4); ctx.globalAlpha=1;
-        }else{      // arriba hacia arriba (negativo)
-          ctx.fillRect(x, -h, w, h);
-          ctx.globalAlpha=0.25; ctx.fillRect(x, -4, w, 4); ctx.globalAlpha=1;
-        }
+        mirror ? ctx.fillRect(x, 0, w, h) : ctx.fillRect(x, -h, w, h);
       }
       ctx.restore();
     }
-    // glow base
-    ctx.fillStyle='rgba(19,215,122,0.12)';
-    ctx.fillRect(bx, byTop-6, bw, 6);
-    ctx.fillRect(bx, byBottom, bw, 6);
 
+    ctx.fillStyle='rgba(19,215,122,0.12)';
+    ctx.fillRect(pbx, byTop-6, bw, 6);
+    ctx.fillRect(pbx, byBottom, bw, 6);
     paintWave(byTop, false);
     paintWave(byBottom, true);
 
-    // beat → partículas
+    // partículas en beat
     if(arr){
-      level/=bars;
-      const nowMs=performance.now();
+      level/=bars; const nowMs=performance.now();
       if(level>0.50 && nowMs-lastBeat>200){ lastBeat=nowMs; burstParticles('#ffd54a', 8); }
     }
-
-    // light-sweep del marco
-    const pad = Math.round(14*Cw/2048);
-    const lw = Math.round(3*Cw/2048);
-    ctx.lineWidth = lw;
-    ctx.strokeStyle='rgba(255,255,255,0.75)';
-    const per = (sweepT%4)/4;
-    const rx=pad, ry=pad, rw=Cw-pad*2, rh=Ch-pad*2;
-    ctx.save(); ctx.beginPath();
-    const L = rw*2+rh*2, Lp=L*per;
-    function drawPartial(len){
-      let d=len; ctx.moveTo(rx,ry);
-      if(d<=rw){ ctx.lineTo(rx+d, ry); return; } else { ctx.lineTo(rx+rw, ry); d-=rw; }
-      if(d<=rh){ ctx.lineTo(rx+rw, ry+d); return; } else { ctx.lineTo(rx+rw, ry+rh); d-=rh; }
-      if(d<=rw){ ctx.lineTo(rx+rw-d, ry+rh); return; } else { ctx.lineTo(rx, ry+rh); d-=rw; }
-      ctx.lineTo(rx, ry+rh-d);
-    }
-    drawPartial(Lp); ctx.stroke(); ctx.restore();
-
-    // micro glare diagonal en la foto
-    const vx=Math.round(SLOT.x*Cw/PW), vy=Math.round(SLOT.y*Ch/PH),
-          vw=Math.round(SLOT.w*Cw/PW), vh=Math.round(SLOT.h*Ch/PH);
-    const g=ctx.createLinearGradient(vx,vy, vx+vw, vy+vh);
-    const t = (performance.now()%3000)/3000;
-    g.addColorStop(Math.max(0,t-0.08),'rgba(255,255,255,0)');
-    g.addColorStop(Math.min(1,t),'rgba(255,255,255,0.08)');
-    g.addColorStop(Math.min(1,t+0.08),'rgba(255,255,255,0)');
-    ctx.fillStyle=g; ctx.fillRect(vx,vy,vw,vh);
 
     // actualizar textura
     overlayP.__tex && (overlayP.__tex.needsUpdate = true);
   }
 
-  // Ken-Burns suave
   function kenBurns(){
     const B=vPlane.__base; if(!B) return;
     const dx = (Math.sin(performance.now()/6000)*0.015)*B.rx;
@@ -391,6 +323,8 @@
   // ===== Estados AR =====
   anchor.addEventListener('targetFound', ()=>{
     overlayP.emit('show',null,false);
+    title3d.emit('show',null,false);
+    artist3d.emit('show',null,false);
     root.emit('pop',null,false);
     v1.play().catch(()=>{});
     if(userOK){ audio?.play().catch(()=>{}); document.getElementById('btnSound').hidden=true; }
@@ -419,21 +353,19 @@
       if(!audio){
         audio = new Audio(AUDIO_URL); audio.crossOrigin='anonymous'; audio.preload='auto';
         try{
-          acx = new (window.AudioContext||window.webkitAudioContext)();
-          analyser = acx.createAnalyser(); analyser.fftSize = 64;
-          dataArr = new Uint8Array(analyser.frequencyBinCount);
-          const srcNode = acx.createMediaElementSource(audio);
-          srcNode.connect(analyser); analyser.connect(acx.destination);
-        }catch(e){ /* fallback */ }
+          const AC = window.AudioContext||window.webkitAudioContext;
+          acx = new AC(); analyser = acx.createAnalyser(); analyser.fftSize = 64;
+          const src = acx.createMediaElementSource(audio);
+          src.connect(analyser); analyser.connect(acx.destination);
+        }catch(e){}
       }
       userOK=true; await audio.play(); v1.play().catch(()=>{});
       if(acx && acx.state==='suspended') await acx.resume();
-      btnSound.hidden=true;
-      burstParticles('#ffd54a', 10); // arranque con partículas doradas
+      btnSound.hidden=true; burstParticles('#ffd54a', 10);
     }catch(e){}
   };
 
-  // Tap sobre el póster: play/pause + vibración + partículas
+  // Tap: play/pause + vibración + partículas
   root.addEventListener('click', ()=>{
     const any = audio && !audio.paused;
     if(any){ audio.pause(); v1.pause(); burstParticles('#ff6d6d', 8); }
@@ -441,7 +373,11 @@
     if(navigator.vibrate) navigator.vibrate(20);
   });
 
-  // calibración
+  // Reintentos de reproducción en el primer gesto (móviles estrictos)
+  window.addEventListener('touchend', ()=>{ v1.play().catch(()=>{}); audio?.play?.().catch(()=>{}); }, {once:true,passive:true});
+  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
+
+  // Calibración
   if(qs.get('cal')==='0') document.getElementById('cal').style.display='none';
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
@@ -465,9 +401,6 @@
 
   scene.addEventListener('arReady', ()=>log('Cámara OK'));
   scene.addEventListener('arError', ()=>log('Error cámara/permisos'));
-
-  // auto-start con primer gesto
-  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
 </body>
