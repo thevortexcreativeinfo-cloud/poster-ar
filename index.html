@@ -37,15 +37,14 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- SRC por defecto para evitar warning de a-assets; el JSON puede sobrescribirlo -->
     <video id="v1"
       src="https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4"
       playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity id="mouseRay" cursor="rayOrigin: mouse"
-              raycaster="objects: .ui3d,.heart,.dragplane; far: 3"></a-entity>
+    <!-- Raycaster ya no es imprescindible, pero lo dejamos para UI futura -->
+    <a-entity id="mouseRay" cursor="rayOrigin: mouse" raycaster="objects: .ui3d,.heart,.dragplane; far: 3"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -72,16 +71,6 @@
       }
     });
   }
-  function getRay(){
-    var ent=document.getElementById('mouseRay');
-    return ent && ent.components ? ent.components.raycaster : null;
-  }
-  function refreshRay(){
-    // refresca la lista de objetos del raycaster (clave para que reconozca corazones/dragplane nuevos)
-    setTimeout(function(){
-      var rc=getRay(); if(rc && typeof rc.refreshObjects==='function') rc.refreshObjects();
-    },0);
-  }
 
   /* ---------- Cargar JSON ---------- */
   var cfgUrl = qs.get('cfg');
@@ -94,6 +83,7 @@
     scene.setAttribute('mindar-image',
       'imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
+    // cámara del dispositivo en cover
     new MutationObserver(function(){
       Array.prototype.forEach.call(document.querySelectorAll('video'), function(v){
         if(v.srcObject instanceof MediaStream){
@@ -208,7 +198,7 @@
       if(!v1.videoWidth || !map) forceThreeVideoTexture();
     }
 
-    /* ---------- Canvas overlay: textos + barra musical ---------- */
+    /* ---------- Canvas overlay: textos + barra musical (igual que antes) ---------- */
     var Cw=2048, Ch=Math.round(Cw*H);
     var canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
     var ctx=canvas.getContext('2d');
@@ -259,7 +249,9 @@
         if(audio.paused){
           if(acx && acx.state==='suspended'){ acx.resume().then(function(){ audio.play(); }); }
           else{ audio.play(); }
-        }else{ audio.pause(); }
+        }else{
+          audio.pause();
+        }
       }catch(e){}
     };
 
@@ -269,7 +261,6 @@
 
     function draw(){
       ctx.clearRect(0,0,Cw,Ch);
-
       // Título
       var tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
@@ -277,21 +268,17 @@
       ctx.font='800 '+titlePx+'px system-ui,Segoe UI,Roboto';
       ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
       ctx.fillStyle=(CFG.colors && CFG.colors.title)||'#000'; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
-
       // Artista
       var ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
           aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
       ctx.font='600 '+artistPx+'px system-ui,Segoe UI,Roboto';
       ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
       ctx.fillStyle=(CFG.colors && CFG.colors.artist)||'#000'; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
-
-      // Barra base
+      // Barra base + progreso
       var pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
       ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
       ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
-
-      // Progreso y tiempos
       var p=0, cur='0:00', dur='0:00';
       if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
       var fw=Math.max(2, Math.floor(pbw*p));
@@ -299,22 +286,18 @@
       grad.addColorStop(0, (CFG.colors && CFG.colors.wave1)||'#13d77a');
       grad.addColorStop(1, (CFG.colors && CFG.colors.wave2)||'#ffd54a');
       ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-
       var kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
       ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
       ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
       ctx.font='700 '+Math.round(28*Cw/2048)+'px system-ui,Segoe UI,Roboto';
       ctx.fillText(cur, pbx, pby - 10);
       ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
-
       // Espectro
       var arr=null;
       if(analyser){ arr=new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); }
-
       var step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
       var t = performance.now();
       var sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
-
       for(var pass=0; pass<2; pass++){
         var baseY = (pass===0? yTop : yBot);
         var col = (pass===0? ((CFG.colors && CFG.colors.wave1)||'#13d77a') : ((CFG.colors && CFG.colors.wave2)||'#ffd54a'));
@@ -323,22 +306,17 @@
           var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
           levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
           peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
-
           var x = Math.round(pbx + i*step + step*0.18);
           var w = Math.max(2, Math.round(step*0.64));
           var h = Math.max(3, Math.round(levels[i]*waveH));
           var peakY = Math.max(4, Math.round(peaks[i]*waveH));
-
           var dist = Math.abs((x+w/2) - sweepX);
           var glow = Math.max(0, 1 - dist/120);
-
           ctx.fillStyle = col;
           if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
-
           ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
           if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
           ctx.globalAlpha = 1;
-
           if(glow>0){
             var g = ctx.createLinearGradient(x,0,x+w,0);
             g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
@@ -349,29 +327,29 @@
           }
         }
       }
-
       // Cinta inferior
       var bandH = Math.round(50*Cw/2048);
       var yBand = Math.round((PH*0.88)*Ch/PH);
       var g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
       g2.addColorStop(0,'rgba(0,0,0,0.06)'); g2.addColorStop(1,'rgba(0,0,0,0)');
       ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
-
       if(overlay.__tex) overlay.__tex.needsUpdate = true;
       requestAnimationFrame(draw);
     }
     requestAnimationFrame(draw);
 
-    /* ---------- Corazones con física + drag (+ raycaster refresh) ---------- */
+    /* ---------- Corazones interactivos: tocar=crear, mantener=arrastrar ---------- */
     (function(){
+      var THREE = AFRAME.THREE;
       var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
 
       var area={ x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
       var hearts=[], MAX_HEARTS=28, HEART_SIZE=0.11;
 
-      var GRAVITY_Y=-0.9, LINEAR_DAMP=0.995, RESTITUTION=0.58, FRICTION_WALL=0.02, ANG_DAMP=0.992;
+      // físicas
+      var GRAVITY_Y=-0.9, LINEAR_DAMP=0.995, RESTITUTION=0.60, FRICTION_WALL=0.04, ANG_DAMP=0.992;
 
-      // plano invisible para drag
+      // plano invisible para intersección
       var dragPlane=document.createElement('a-plane');
       dragPlane.classList.add('dragplane');
       dragPlane.setAttribute('width',1);
@@ -379,16 +357,58 @@
       dragPlane.setAttribute('position','0 0 0.07');
       dragPlane.setAttribute('material','color:#fff; transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
       root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
-      refreshRay();
+
+      // Raycaster manual (más fiable con touch)
+      var raycaster=new THREE.Raycaster();
+      var lastClient=null; // {x,y} últimos coords de puntero
+
+      function sceneCanvas(){
+        return scene.renderer && scene.renderer.domElement ? scene.renderer.domElement : null;
+      }
+      function pointerLocalFromClient(){
+        var canvas=sceneCanvas(); if(!canvas || !lastClient) return null;
+        var rect=canvas.getBoundingClientRect();
+        var nx=((lastClient.x-rect.left)/rect.width)*2-1;
+        var ny=-((lastClient.y-rect.top)/rect.height)*2+1;
+        if(!scene.camera) return null;
+        raycaster.setFromCamera({x:nx,y:ny}, scene.camera);
+        var mesh=dragPlane.getObject3D('mesh'); if(!mesh) return null;
+        var hits=raycaster.intersectObject(mesh,true);
+        if(!hits.length) return null;
+        var p=hits[0].point.clone();
+        root.object3D.worldToLocal(p);
+        p.x=clamp(p.x, area.x1, area.x2);
+        p.y=clamp(p.y, area.y1, area.y2);
+        return {x:p.x,y:p.y};
+      }
 
       function createSpark(x,y){
         var s=document.createElement('a-plane');
-        s.setAttribute('width',0.06); s.setAttribute('height',0.06);
+        s.setAttribute('width',0.05); s.setAttribute('height',0.05);
         s.setAttribute('position', x+' '+y+' 0.061');
         s.setAttribute('material','shader:flat; color:#ffffff; transparent:true; opacity:0.9; side:double');
-        s.setAttribute('animation__fade','property:material.opacity; to:0; dur:240; easing:linear');
+        s.setAttribute('animation__fade','property:material.opacity; to:0; dur:220; easing:linear');
+        s.setAttribute('animation__scale','property:scale; to:1.6 1.6 1; dur:220; easing:linear');
         root.appendChild(s); setRO(s, 145, false, false);
-        setTimeout(function(){ s.remove(); }, 260);
+        setTimeout(function(){ s.remove(); }, 240);
+      }
+      function leaveTrail(x,y){
+        var g=document.createElement('a-image');
+        g.setAttribute('src',HEART_SVG);
+        g.setAttribute('width',0.06); g.setAttribute('height',0.06);
+        g.setAttribute('position', x+' '+y+' 0.059');
+        g.setAttribute('material','transparent:true; opacity:0.35; side:double; alphaTest:0.01');
+        g.setAttribute('animation__out','property:material.opacity; to:0; dur:260; easing:linear');
+        g.setAttribute('animation__scale','property:scale; to:1.15 1.15 1; dur:260; easing:linear');
+        root.appendChild(g); setRO(g, 139, false, false);
+        setTimeout(function(){ g.remove(); }, 280);
+      }
+
+      function squash(h, factor){
+        var sx=1+0.25*factor, sy=1-0.25*factor; // estira/aplasta
+        if(sx<0.8) sx=0.8; if(sy<0.8) sy=0.8; if(sx>1.3) sx=1.3; if(sy>1.3) sy=1.3;
+        h.el.setAttribute('scale', sx+' '+sy+' 1');
+        setTimeout(function(){ h.el.setAttribute('scale','1 1 1'); }, 120);
       }
 
       function spawnHeart(x,y,sz){
@@ -397,70 +417,69 @@
         if(typeof sz!=='number') sz=HEART_SIZE;
 
         var r=sz*0.5, m=r*r;
-        var h=document.createElement('a-image');
-        h.setAttribute('src',HEART_SVG);
-        h.setAttribute('width',sz); h.setAttribute('height',sz);
-        h.setAttribute('position', x+' '+y+' 0.06');
-        h.setAttribute('material','transparent:true; alphaTest:0.01; side:double');
-        h.classList.add('ui3d','heart');
-        root.appendChild(h); setRO(h, 140, false, false);
+        var hEl=document.createElement('a-image');
+        hEl.setAttribute('src',HEART_SVG);
+        hEl.setAttribute('width',sz); hEl.setAttribute('height',sz);
+        hEl.setAttribute('position', x+' '+y+' 0.06');
+        hEl.setAttribute('material','transparent:true; alphaTest:0.01; side:double');
+        hEl.classList.add('ui3d','heart');
+        root.appendChild(hEl); setRO(hEl, 140, false, false);
 
-        hearts.push({ el:h, x:x, y:y, vx:(Math.random()-0.5)*0.15, vy:0.35+Math.random()*0.18,
-                      ax:0, ay:0, r:r, m:m, ang:(Math.random()*360), w:(Math.random()-0.5)*60 });
+        var h={ el:hEl, x:x, y:y, vx:(Math.random()-0.5)*0.12, vy:0.28+Math.random()*0.16,
+                r:r, m:m, ang:(Math.random()*360), w:(Math.random()-0.5)*50,
+                trailT:0 };
+        hearts.push(h);
         if(hearts.length>MAX_HEARTS){ var old=hearts.shift(); old.el.remove(); }
-
-        refreshRay(); // 👈 MUY IMPORTANTE
+        createSpark(x,y);
+        return h;
       }
-      // expón para usarlo fuera (targetFound)
-      window._spawnHeart = spawnHeart;
 
-      function getPointer(){
-        var rc=getRay(); var ints = (rc && rc.intersections) ? rc.intersections : [];
-        var hit=null;
-        for(var i=0;i<ints.length;i++){
-          var it=ints[i];
-          if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('dragplane')){ hit=it; break; }
+      function findHeartAt(p){
+        var best=null, bestD2=1e9;
+        for(var i=0;i<hearts.length;i++){
+          var h=hearts[i]; var dx=p.x-h.x, dy=p.y-h.y; var d2=dx*dx+dy*dy;
+          if(d2<=h.r*h.r && d2<bestD2){ best=h; bestD2=d2; }
         }
-        if(!hit) return null;
-        var p=hit.point.clone();
-        root.object3D.worldToLocal(p);
-        if(p.x<area.x1) p.x=area.x1; if(p.x>area.x2) p.x=area.x2;
-        if(p.y<area.y1) p.y=area.y1; if(p.y>area.y2) p.y=area.y2;
-        return {x:p.x,y:p.y};
-      }
-      function heartFromEl(el){
-        for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; }
-        return null;
+        return best;
       }
 
-      var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+      var dragging=null, dragOffset={x:0,y:0}, lastTime=performance.now();
 
-      function onPointerDown(){
-        var rc=getRay(); var ints=(rc && rc.intersections)? rc.intersections : [];
-        var hitHeart=null;
-        for(var i=0;i<ints.length;i++){
-          var it=ints[i];
-          if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('heart')){ hitHeart=it; break; }
-        }
-        var p=getPointer();
-
-        if(hitHeart && p){
-          var h=heartFromEl(hitHeart.object.el); if(!h) return;
+      function onPointerDown(ev){
+        if(ev.touches && ev.touches.length){ lastClient={x:ev.touches[0].clientX, y:ev.touches[0].clientY}; }
+        else{ lastClient={x:ev.clientX, y:ev.clientY}; }
+        var p=pointerLocalFromClient(); if(!p) return;
+        var h=findHeartAt(p);
+        if(h){
           dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
-          lastPointer=p; lastTime=performance.now();
-          return;
+        }else{
+          // crear y enganchar directamente
+          var nh=spawnHeart(p.x,p.y, HEART_SIZE*(0.9+Math.random()*0.25));
+          dragging=nh; dragOffset={x:0,y:0};
         }
-        if(p){ spawnHeart(p.x,p.y, HEART_SIZE*(0.9+Math.random()*0.25)); }
+        ev.preventDefault && ev.preventDefault();
+      }
+      function onPointerMove(ev){
+        if(ev.touches && ev.touches.length){ lastClient={x:ev.touches[0].clientX, y:ev.touches[0].clientY}; }
+        else if(typeof ev.clientX==='number'){ lastClient={x:ev.clientX, y:ev.clientY}; }
       }
       function onPointerUp(){ dragging=null; }
 
-      var sceneEl=document.getElementById('scene');
-      sceneEl.addEventListener('mousedown', onPointerDown);
-      sceneEl.addEventListener('mouseup', onPointerUp);
-      sceneEl.addEventListener('mouseleave', onPointerUp);
-      sceneEl.addEventListener('touchstart', onPointerDown, {passive:true});
-      sceneEl.addEventListener('touchend', onPointerUp, {passive:true});
-      sceneEl.addEventListener('touchcancel', onPointerUp, {passive:true});
+      var canvasEl=null;
+      function attachPointer(){
+        canvasEl=scene.renderer && scene.renderer.domElement ? scene.renderer.domElement : null;
+        var tgt=canvasEl || document.getElementById('scene');
+        tgt.addEventListener('mousedown', onPointerDown, {passive:false});
+        window.addEventListener('mousemove', onPointerMove, {passive:true});
+        window.addEventListener('mouseup', onPointerUp, {passive:true});
+        tgt.addEventListener('touchstart', onPointerDown, {passive:false});
+        window.addEventListener('touchmove', onPointerMove, {passive:false});
+        window.addEventListener('touchend', onPointerUp, {passive:true});
+        window.addEventListener('touchcancel', onPointerUp, {passive:true});
+      }
+      if(scene.hasLoaded){ attachPointer(); } else {
+        scene.addEventListener('loaded', attachPointer, {once:true});
+      }
 
       function collidePair(a,b){
         var dx=b.x-a.x, dy=b.y-a.y, distSq=dx*dx+dy*dy, minDist=a.r+b.r;
@@ -471,20 +490,24 @@
         var rvx=b.vx-a.vx, rvy=b.vy-a.vy, relVel=rvx*nx + rvy*ny; if(relVel>0) return;
         var j=-(1+RESTITUTION)*relVel/(1/a.m + 1/b.m), jx=j*nx, jy=j*ny;
         a.vx-=jx/a.m; a.vy-=jy/a.m; b.vx+=jx/b.m; b.vy+=jy/b.m;
-        a.w-= (jy*0.5 - jx*0.5)*20; b.w+= (jy*0.5 - jx*0.5)*20;
-        if(j>0.35) createSpark(a.x+nx*a.r, a.y+ny*a.r);
+        a.w-= (jy*0.5 - jx*0.5)*18; b.w+= (jy*0.5 - jx*0.5)*18;
+        if(j>0.30){ createSpark(a.x+nx*a.r, a.y+ny*a.r); squash(a, 0.9); squash(b, 0.9); }
       }
 
       function physics(){
-        var dt=1/60, p=getPointer();
+        var now=performance.now(), dt=Math.min(1/60, (now-lastTime)/1000); lastTime=now;
+
+        // arrastre con "muelle" hacia el puntero
+        var p=pointerLocalFromClient();
         if(dragging && p){
           var nx=p.x+dragOffset.x, ny=p.y+dragOffset.y;
-          var now=performance.now(), dtms=Math.max(16, now-lastTime);
-          dragging.vx=(nx-dragging.x)/(dtms/1000);
-          dragging.vy=(ny-dragging.y)/(dtms/1000);
-          dragging.x = dragging.x*0.35 + nx*0.65;
-          dragging.y = dragging.y*0.35 + ny*0.65;
-          lastPointer=p; lastTime=now;
+          var follow=0.65;
+          var vx=(nx-dragging.x)/dt, vy=(ny-dragging.y)/dt;
+          dragging.x = dragging.x*(1-follow) + nx*follow;
+          dragging.y = dragging.y*(1-follow) + ny*follow;
+          dragging.vx = vx; dragging.vy = vy;
+          dragging.trailT += dt;
+          if(dragging.trailT>0.06){ leaveTrail(dragging.x, dragging.y); dragging.trailT=0; }
         }
 
         for(var i=0;i<hearts.length;i++){
@@ -494,17 +517,22 @@
             h.vx *= LINEAR_DAMP; h.vy *= LINEAR_DAMP;
             h.x  += h.vx*dt;     h.y  += h.vy*dt;
           }
-          if(h.x-h.r<area.x1){ h.x=area.x1+h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-          if(h.x+h.r>area.x2){ h.x=area.x2-h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-          if(h.y-h.r<area.y1){ h.y=area.y1+h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-          if(h.y+h.r>area.y2){ h.y=area.y2-h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+          // paredes + squash
+          if(h.x-h.r<area.x1){ h.x=area.x1+h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; squash(h,0.8); }
+          if(h.x+h.r>area.x2){ h.x=area.x2-h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; squash(h,0.8); }
+          if(h.y-h.r<area.y1){ h.y=area.y1+h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; squash(h,0.8); }
+          if(h.y+h.r>area.y2){ h.y=area.y2-h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; squash(h,0.8); }
+          // giro e imagen
           h.w *= ANG_DAMP; h.ang = (h.ang||0) + h.w*dt;
           h.el.setAttribute('position', h.x+' '+h.y+' 0.06');
           h.el.setAttribute('rotation', '0 0 '+h.ang);
         }
+
+        // colisiones pares
         for(var a=0;a<hearts.length;a++){
           for(var b=a+1;b<hearts.length;b++) collidePair(hearts[a], hearts[b]);
         }
+
         requestAnimationFrame(physics);
       }
       requestAnimationFrame(physics);
@@ -551,8 +579,7 @@
 
     anchor.addEventListener('targetFound', function(){
       v1.play().then(function(){ setTimeout(checkBlackFallback, 200); }).catch(function(){});
-      // corazones de bienvenida (usa la función expuesta global)
-      if(window._spawnHeart){ for(var i=0;i<4;i++) window._spawnHeart(); }
+      // ❌ ya NO se crean corazones automáticos aquí
       log('Target FOUND');
     });
 
