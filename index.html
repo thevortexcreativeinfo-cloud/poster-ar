@@ -8,10 +8,13 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
+  /* Cámara del móvil detrás (fullscreen cover) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -34,6 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
+    <!-- Tu vídeo de Cloudinary: se centra y NO se mueve -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -49,6 +53,7 @@
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
 
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
@@ -58,14 +63,14 @@
     });
   }
 
-  /* ========== Cargar JSON ========== */
+  /* ========== Cargar JSON de configuración ========== */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ========== MindAR ========== */
+  /* ========== MindAR: escena y cámara detrás ========== */
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
@@ -93,7 +98,7 @@
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ========== Marco animado (glow + runners) ========== */
+  /* ========== Marco animado bonito ========== */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const glow1 = CFG.colors?.wave1 || '#13d77a';
   const glow2 = CFG.colors?.wave2 || '#ffd54a';
@@ -117,33 +122,17 @@
       p.setAttribute('width',s.w); p.setAttribute('height',s.h);
       p.setAttribute('position',`${s.x} ${s.y} ${z}`);
       const col = i%2 ? glow2 : glow1;
-      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.24; roughness:1; metalness:0; transparent:true; opacity:.95`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.42; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
+      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
+      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine`);
       root.appendChild(p); setRO(p, 20, false, false);
     });
   })();
 
-  (function runners(){
-    const z=0.019, w=0.02, h=0.006, dur=1800;
-    function runner(x1,y1,x2,y2,color){
-      const r=document.createElement('a-plane');
-      r.setAttribute('width',w); r.setAttribute('height',h);
-      r.setAttribute('position',`${x1} ${y1} ${z}`);
-      r.setAttribute('material',`shader:standard; color:${color}; emissive:${color}; emissiveIntensity:0.9; roughness:1; metalness:0; transparent:true; opacity:1`);
-      r.setAttribute('animation__go',`property:position; to:${x2} ${y2} ${z}; dur:${dur}; dir:alternate; loop:true; easing:easeInOutSine`);
-      root.appendChild(r); setRO(r, 25, false, false);
-    }
-    runner(u.cx-u.wn/2, u.cy+u.hn/2+0.01, u.cx+u.wn/2, u.cy+u.hn/2+0.01, glow1);
-    runner(u.cx+u.wn/2, u.cy-u.hn/2-0.01, u.cx-u.wn/2, u.cy-u.hn/2-0.01, glow2);
-    runner(u.cx-u.wn/2-0.01, u.cy-u.hn/2, u.cx-u.wn/2-0.01, u.cy+u.hn/2, glow2);
-    runner(u.cx+u.wn/2+0.01, u.cy+u.hn/2, u.cx+u.wn/2+0.01, u.cy-u.hn/2, glow1);
-  })();
-
-  /* ========== Plano del VÍDEO (encima) ========== */
+  /* ========== VÍDEO centrado (sin desplazamientos) ========== */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';
+  v1.src = CFG.video || '';             // p.ej. Cloudinary mp4
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -163,19 +152,7 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  let forcedVideoTex=false;
-  function forceThreeVideoTexture(){
-    if(forcedVideoTex) return;
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh) return;
-    const tex=new AFRAME.THREE.VideoTexture(v1);
-    tex.needsUpdate=true;
-    mesh.material.map=tex; mesh.material.needsUpdate=true;
-    coverFromMap(tex);
-    forcedVideoTex=true; log('Fallback a THREE.VideoTexture');
-  }
-  function checkBlackFallback(){ const mesh=vPlane.getObject3D('mesh'); const map=mesh?.material?.map; if(!v1.videoWidth || !map) forceThreeVideoTexture(); }
-
-  /* ========== Canvas overlay (textos + barra musical) ========== */
+  /* ========== Canvas overlay (textos + barra musical mejorada) ========== */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -213,12 +190,12 @@
 
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+  const mmss=t=>{ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; };
 
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título
+    // Título y artista
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -226,7 +203,6 @@
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
 
-    // Artista
     const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
           aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
@@ -254,7 +230,7 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Espectro doble con smoothing + peaks + barrido
+    // Espectro con smoothing + peaks + barrido
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
@@ -303,7 +279,7 @@
   }
   requestAnimationFrame(draw);
 
-  /* ========== Corazones con física + drag ========== */
+  /* ========== Corazones con física + drag (zona inferior) ========== */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
   const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
@@ -327,11 +303,9 @@
     if(hearts.length>24){ const old=hearts.shift(); old.el.remove(); }
   }
 
-  const ray = document.getElementById('mouseRay').components.raycaster;
   let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
-
   function pointerLocal(){
-    const ints = ray.intersections || [];
+    const ray = getRay(); const ints = ray?.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('dragplane'));
     if(!hit) return null;
     const p = hit.point.clone();
@@ -341,7 +315,7 @@
   function heartFromEl(el){ return hearts.find(h=>h.el===el)||null; }
 
   scene.addEventListener('mousedown', ()=>{
-    const ints = ray.intersections || [];
+    const ray = getRay(); const ints = ray?.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('heart'));
     if(!hit) return;
     const h = heartFromEl(hit.object.el); if(!h) return;
@@ -384,44 +358,46 @@
     requestAnimationFrame(heartsTick);
   })();
 
-  /* ========== START ROBUSTO DEL BOTÓN ========== */
-  async function ensureSceneLoaded(){
+  /* ========== START DEL BOTÓN — MÁS ROBUSTO ========== */
+  async function waitSceneLoaded(){
     if(scene.hasLoaded) return;
     await new Promise(res=>scene.addEventListener('loaded', res, {once:true}));
+  }
+  async function waitMindARReady(){
+    if(scene.components['mindar-image']) return;
+    await new Promise(res=>{
+      const onInit=(e)=>{ if(e.detail?.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } };
+      scene.addEventListener('componentinitialized', onInit);
+    });
   }
   async function startMindAR(){
     const comp = scene.components['mindar-image'];
     const sys  = scene.systems['mindar-image-system'];
-    if(comp && comp.start) { await comp.start(); return; }
-    if(sys  && sys.start)  { await sys.start();  return; }
+    if(comp?.start){ await comp.start(); return; }
+    if(sys?.start){ await sys.start(); return; }
     throw new Error('No MindAR start method');
+  }
+  async function bootAR(){
+    try{
+      log('Pidiendo permisos de cámara…');
+      // Pedimos permiso primero para maximizar compatibilidad en iOS/Android
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
+      s.getTracks().forEach(t=>t.stop());
+    }catch(e){ /* si falla, igualmente intentamos MindAR; algunos navegadores no necesitan esto */ }
+
+    await waitSceneLoaded();
+    await waitMindARReady();
+    log('Iniciando MindAR…');
+    await startMindAR();
+    document.getElementById('btnStart').textContent='Cámara lista';
+    log('Cámara iniciada');
   }
 
   const btnStart=document.getElementById('btnStart');
-  btnStart.onclick=async()=>{
-    try{
-      btnStart.disabled=true; log('Iniciando…');
-      await ensureSceneLoaded();
-      // 1) Intento directo (gesto del usuario presente)
-      await startMindAR();
-      btnStart.textContent='Cámara lista';
-    }catch(e1){
-      log('Reintentando con permiso previo…');
-      try{
-        // 2) Pedimos permiso y reintentamos
-        const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-        s.getTracks().forEach(t=>t.stop());
-        await startMindAR();
-        btnStart.textContent='Cámara lista';
-      }catch(e2){
-        btnStart.disabled=false;
-        log(`No se pudo iniciar la cámara (${e2.name||''} ${e2.message||e2})`);
-      }
-    }
-  };
+  btnStart.addEventListener('click', async()=>{ btnStart.disabled=true; try{ await bootAR(); }catch(e){ btnStart.disabled=false; log(`No se pudo iniciar cámara (${e.name||''} ${e.message||e})`);} });
 
   anchor.addEventListener('targetFound', async ()=>{
-    try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
+    try{ await v1.play(); }catch{}
     // audio autoplay
     setupAudio(); try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
@@ -429,12 +405,12 @@
     for(let i=0;i<4;i++) spawnHeart();
     log('Target FOUND');
   });
-  anchor.addEventListener('targetLost', ()=>{
-    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
-  });
+  anchor.addEventListener('targetLost', ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…'); });
 
-  // primer gesto (ayuda iOS)
-  window.addEventListener('pointerup', ()=>{ btnStart.click(); }, {once:true,passive:true});
+  // También intentamos arrancar en el primer gesto (iOS)
+  window.addEventListener('pointerdown', ()=>{ if(!scene?.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
+
+  /* ========== FIN ========== */
 })();
 </script>
 </body>
