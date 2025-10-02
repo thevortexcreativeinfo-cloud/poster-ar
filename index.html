@@ -8,14 +8,35 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* Cámara en cover detrás del canvas */
+  video[playsinline]{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
+  /* Canvas WebGL encima de la cámara */
   a-scene{position:fixed!important;inset:0!important;z-index:2!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
-  .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:4}
-  .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
-  .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:4}
-  .cal{position:fixed;left:8px;bottom:8px;display:flex;gap:6px;flex-wrap:wrap;max-width:96vw;z-index:4}
+
+  /* UI / botones (aseguramos que reciban eventos) */
+  .ui{
+    position:fixed; left:8px; top:8px; display:flex; gap:8px;
+    z-index:9999; pointer-events:auto;
+  }
+  .btn{
+    border:1px solid #2a3a58; background:#0f1522; color:#eaf2ff;
+    border-radius:10px; padding:8px 10px; pointer-events:auto;
+  }
+  .dbg{
+    position:fixed; right:8px; top:8px;
+    background:#0f1522cc; border:1px solid #22324d; border-radius:8px;
+    padding:8px 10px; color:#cfe3ff; font:12px/1.3 system-ui; z-index:9999;
+  }
+
+  /* Panel de calibración */
+  .cal{
+    position:fixed; left:8px; bottom:8px; display:flex; gap:6px; flex-wrap:wrap;
+    max-width:96vw; z-index:9999; pointer-events:auto;
+  }
   .chip{background:#0f1522;border:1px solid #2a3a58;color:#eaf2ff;border-radius:10px;padding:6px 8px}
 </style>
 </head>
@@ -57,21 +78,19 @@
 </a-scene>
 
 <script>
-/* ===== Config fija (tu caso) ===== */
+/* ===== Config fija (tus URLs) ===== */
 const BASE = {
   t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
   d: 'https://res.cloudinary.com/dtge9nklw/image/upload/v1759311815/poster_sin_foto_cancion_ztjqvw.png',
   pw: 2481, ph: 3508,
   video: {
     src: 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
-    // coordenadas escaladas desde 596×842 → 2481×3508 (las que te funcionaban)
-    x: 296, y: 316, w: 1890, h: 1682
+    x: 296, y: 316, w: 1890, h: 1682   // rectángulo de vídeo en px (sobre el diseño base)
   },
   texts: [
     { value:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
     { value:'Ed Sheeran',   x:200, y:2330, w:2080, h:150, align:'center', color:'#000000' }
   ],
-  // audio + barra (simple, sin EQ)
   audio: 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311992/ssvid.app--Ed-Sheeran-Shape-of-You-Lyrics_vyw046.mp3',
   progress: { x:300, y:2640, w:2060, h:18, bg:'#000000', fill:'#13d77a', knob:'#000000' }
 };
@@ -81,7 +100,7 @@ const CONF = {
   ...BASE,
   dx: +(qs.get('dx')||0), dy: +(qs.get('dy')||0),
   scale: +(qs.get('scale')||1), rot: +(qs.get('rot')||0),
-  showCal: qs.get('cal')!=='0' // cal=0 para ocultar la UI
+  showCal: qs.get('cal')!=='0' // cal=0 para ocultar la UI en producción
 };
 /* ================================= */
 
@@ -92,7 +111,7 @@ const scene=document.getElementById('scene');
 scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} });
 
-/* Cámara en cover asegurada */
+/* Cámara en cover asegurada (por si cambia el DOM) */
 new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
   if(v.srcObject instanceof MediaStream){
     Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -107,7 +126,7 @@ const v1=document.getElementById('v1'); v1.src=CONF.video.src;
 const H = CONF.ph/CONF.pw;
 const px2=(x,y,w,h)=>({ wn:w/CONF.pw, hn:h/CONF.pw, cx:-0.5+(x+w/2)/CONF.pw, cy:H/2 - (y+h/2)/CONF.pw });
 
-/* Anchor + root */
+/* Anchor + root transformable */
 const anchor=document.getElementById('anchor');
 const root=document.createElement('a-entity');
 function applyTransform(){
@@ -119,14 +138,14 @@ function applyTransform(){
 applyTransform();
 anchor.appendChild(root);
 
-/* Overlay completo (arriba del target) */
+/* Overlay completo */
 const overlay=document.createElement('a-plane');
 overlay.setAttribute('width',1); overlay.setAttribute('height',H);
 overlay.setAttribute('position','0 0 0.0');
 overlay.setAttribute('material', `shader:flat; ${CONF.d? 'src:#overlayImg;':'color:#00ffaa;'} transparent:true; side:double; depthTest:false; opacity:1`);
 root.appendChild(overlay);
 
-/* Vídeo SIN efectos (para encuadrar fino) */
+/* Vídeo (sin efectos para encuadrar fino) */
 const v=CONF.video; const u=px2(v.x,v.y,v.w,v.h);
 const vPlane=document.createElement('a-plane');
 vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
@@ -134,7 +153,7 @@ vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
 vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
 root.appendChild(vPlane);
 
-/* COVER a la textura del vídeo */
+/* COVER de la textura del vídeo */
 function cover(){
   const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
   const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
@@ -144,14 +163,14 @@ function cover(){
 vPlane.addEventListener('materialtextureloaded',cover);
 v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
 
-/* Textos por canvas → textura (si tu overlay NO trae textos) */
+/* Textos por canvas → textura */
 function addText(slot){
   const g=px2(slot.x,slot.y,slot.w,slot.h);
   const p=document.createElement('a-plane');
   p.setAttribute('width',g.wn); p.setAttribute('height',g.hn);
   p.setAttribute('position',`${g.cx} ${g.cy} 0.12`);
   p.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
-  // canvas
+
   const s=2, cw=Math.min(2048,Math.max(64,Math.round(slot.w*s))), ch=Math.min(1024,Math.max(32,Math.round(slot.h*s)));
   const c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
   ctx.fillStyle=slot.color; ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=Math.floor(ch*.06); ctx.shadowOffsetY=Math.floor(ch*.03);
@@ -161,13 +180,14 @@ function addText(slot){
   ctx.font=fam.replace('64px',size+'px'); ctx.textBaseline='middle';
   ctx.textAlign=(slot.align==='left'?'left':slot.align==='right'?'right':'center');
   const x=(slot.align==='left')?pad:(slot.align==='right')?(cw-pad):(cw/2), y=ch/2; ctx.fillText(slot.value,x,y);
+
   p.addEventListener('loaded',()=>{ const mesh=p.getObject3D('mesh'); if(!mesh) return;
     const tex=new AFRAME.THREE.CanvasTexture(c); tex.needsUpdate=true; mesh.material.map=tex; mesh.material.needsUpdate=true; });
   root.appendChild(p);
 }
 BASE.texts.forEach(addText);
 
-/* Audio sencillo + barra */
+/* Audio sencillo + barra de progreso */
 let audio=null, userOK=false, visible=false, prog=null;
 if(BASE.audio){ audio=new Audio(BASE.audio); audio.crossOrigin='anonymous'; audio.preload='auto'; }
 function makeProgress(x,y,w,h,bg,fill,knob){
@@ -185,25 +205,53 @@ if(BASE.audio){ prog=makeProgress(BASE.progress.x,BASE.progress.y,BASE.progress.
 
 function tryAudio(){ if(!audio) return; if(visible && userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; } else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; }}
 
-/* Eventos AR */
+/* Eventos de tracking */
 anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); tryAudio(); log('Target FOUND'); });
 anchor.addEventListener('targetLost',  ()=>{ visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST'); });
 
-/* Ticks */
+/* Ticks (progreso audio) */
 function tick(){
   if(audio && prog && audio.duration>0){ prog.set(audio.currentTime/audio.duration); }
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
 
-/* Controles */
-const btnStart=document.getElementById('btnStart'), btnSound=document.getElementById('btnSound');
-btnStart.onclick=async()=>{ try{ await scene.systems['mindar-image-system'].start(); btnStart.disabled=true; btnStart.textContent='Cámara lista'; log('Cámara iniciada'); }catch(e){ log('No se pudo iniciar cámara'); } };
-btnSound.onclick=()=>{ userOK=true; tryAudio(); };
-if(!CONF.showCal) document.getElementById('cal').style.display='none';
+/* ===== Inicio de cámara robusto (botón + auto + primer toque) ===== */
+const btnStart = document.getElementById('btnStart');
+const btnSound = document.getElementById('btnSound');
 
-/* Calibración */
-const readout=document.getElementById('readout'); function rerender(){ applyTransform(); }
+async function startAR() {
+  try {
+    const sys = scene.systems && scene.systems['mindar-image-system'];
+    const comp = scene.components && scene.components['mindar-image'];
+    if (sys && sys.start)         await sys.start();
+    else if (comp && comp.start)  await comp.start();
+    else if (scene.el && scene.el.systems && scene.el.systems['mindar-image-system'])
+      await scene.el.systems['mindar-image-system'].start();
+
+    btnStart.disabled = true;
+    btnStart.textContent = 'Cámara lista';
+    console.log('[AR] Cámara iniciada');
+  } catch(e) {
+    console.warn('[AR] No se pudo iniciar cámara:', e);
+  }
+}
+
+// 1) Botón
+btnStart.addEventListener('click', startAR);
+
+// 2) Auto-start cuando la escena está lista
+scene.addEventListener('loaded', () => {
+  const AUTO = true;           // pon en false si no quieres auto-arranque
+  if (AUTO) startAR();
+});
+
+// 3) Por si el navegador exige gesto: primer toque en cualquier sitio
+window.addEventListener('pointerup', () => startAR(), { once:true, passive:true });
+
+/* ===== Calibración ===== */
+const readout=document.getElementById('readout');
+function rerender(){ applyTransform(); }
 document.querySelectorAll('#cal [data-act]').forEach(b=>{
   b.onclick=()=>{
     const stepPx=6, stepSc=0.005, stepRt=0.2;
@@ -224,7 +272,8 @@ document.getElementById('copyUrl').onclick=async()=>{
   url.searchParams.set('rot', String(+CONF.rot.toFixed(2)));
   try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch(e){ prompt('Copia la URL:', url.toString()); }
 };
+// Ocultar panel de calibración si se pasa cal=0
+if(!CONF.showCal) document.getElementById('cal').style.display='none';
 </script>
 </body>
 </html>
-
