@@ -52,7 +52,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <!-- Ponemos src vacío; luego se setea por JS con setAttribute para evitar el warning -->
+    <!-- Le ponemos src vacío y lo setea JS (reduce warnings) -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" src=""></video>
   </a-assets>
 
@@ -70,7 +70,7 @@
   const dbg = document.getElementById('dbg');
   const say = m => { dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
 
-  /* ===== DEFAULTS seguros ===== */
+  /* ===== DEFAULTS (se pisan por cfg) ===== */
   const DEFAULTS = {
     target: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759401459/targets_12_j14r8e.mind',
     video:  'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
@@ -85,10 +85,11 @@
     slotBar:   {x:300, y:2640, w:2060, h:26},
     slotPlay:  {x:1050, y:2920, w:380,  h:380},
     cal:{dx:-30, dy:432, scale:1.185, rot:-0.2},
-    autoplay:true, parallax:false, showCal:false
+    autoplayOnFound:true,   /* 👈 AHORA significa: sonar al detectar, NO al abrir cámara */
+    parallax:false, showCal:false
   };
 
-  /* ===== Carga cfg (fallback a DEFAULTS si falla) ===== */
+  /* ===== Carga cfg opcional (?cfg=URL) ===== */
   async function loadCfg(){
     let cfg = {...DEFAULTS};
     const cfgUrl = qs.get('cfg');
@@ -108,7 +109,10 @@
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-  // Stream cover detrás
+  scene.addEventListener('arReady', ()=>say('Cámara OK (MindAR listo)'));
+  scene.addEventListener('arError', ()=>say('❗ Error de cámara/permisos MindAR'));
+
+  // Cámara stream cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -142,7 +146,6 @@
 
   /* ===== VÍDEO ===== */
   const v1=document.getElementById('v1');
-  // Asigna src como atributo (reduce el warning de a-assets)
   v1.setAttribute('src', CFG.video || '');
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
@@ -163,7 +166,7 @@
   vPlane.addEventListener('materialtextureloaded', setCover);
   v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
 
-  /* ===== CANVAS OVERLAY ===== */
+  /* ===== CANVAS OVERLAY (títulos + barra/wave) ===== */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
@@ -193,7 +196,7 @@
   const titlePx = fitFontFor(CFG.title||'',  titleSlot.w*Cw/PW,   titleSlot.h*Ch/PH, 800);
   const artistPx= fitFontFor(CFG.artist||'', artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ===== AUDIO / UI ===== */
+  /* ===== AUDIO (solo al detectar) ===== */
   const btnStart = document.getElementById('btnStart');
   const btnAudio = document.getElementById('btnAudio');
 
@@ -210,43 +213,21 @@
     }catch(e){}
   }
 
-  btnAudio.onclick = async () => {
-    setupAudio();
+  // NO reproducimos aquí: solo desbloqueamos AudioContext con el gesto
+  const startAR = async () => {
     try{
-      if(audio.paused){
-        if(acx && acx.state==='suspended') await acx.resume();
-        await audio.play();
-        btnAudio.textContent='⏸ Audio';
-      }else{
-        audio.pause();
-        btnAudio.textContent='▶️ Audio';
-      }
-    }catch(e){
-      say('⚠️ Necesita un gesto del usuario para reproducir');
-    }
-  };
-
-  // Área 3D play/pause invisible (si viene en cfg)
-  if(CFG.slotPlay){
-    const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
-    const playBtn = document.createElement('a-circle');
-    playBtn.classList.add('ui3d');
-    playBtn.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
-    playBtn.setAttribute('position', `${pb.cx} ${pb.cy} 0.16`);
-    playBtn.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
-    playBtn.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
-    root.appendChild(playBtn);
-    playBtn.addEventListener('click', async()=>{
+      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
+      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      btnStart.disabled=true; btnStart.textContent='Cámara lista';
+      // Preparamos audio y desbloqueamos el contexto, PERO SIN reproducir
       setupAudio();
-      try{
-        if(audio.paused){ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }
-        else { audio.pause(); btnAudio.textContent='▶️ Audio'; }
-        playBtn.emit('animation__tap'); navigator.vibrate?.(15);
-      }catch(e){}
-    });
-  }
+      try{ acx && acx.state==='suspended' && await acx.resume(); }catch{}
+      say('Cámara iniciada');
+    }catch{ say('No se pudo iniciar cámara'); }
+  };
+  btnStart.onclick = startAR;
 
-  /* ===== DIBUJO textos + barra + waveform ===== */
+  /* ===== Dibujo textos + barra + waveform ===== */
   const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
@@ -365,31 +346,37 @@
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
-  const startAR = async () => {
-    try{
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
-      btnStart.disabled=true; btnStart.textContent='Cámara lista';
-      // habilita audio ya aquí
-      btnAudio.disabled=false;
-      if(CFG.autoplay){
-        setupAudio();
-        try{
-          if(acx && acx.state==='suspended') await acx.resume();
-          await audio.play();
-          btnAudio.textContent='⏸ Audio';
-        }catch(e){ say('Autoplay bloqueado; usa ⏯ Audio'); }
+  // 🔊 Solo permite controlar audio cuando HAY target
+  btnAudio.disabled = true;
+
+  anchor.addEventListener('targetFound', async ()=>{
+    root.emit('pop',null,false);
+    v1.play().catch(()=>{});
+    btnAudio.disabled=false;
+
+    // Si está configurado, reproducimos al detectar (y ya hubo gesto al abrir cámara)
+    if(CFG.autoplayOnFound){
+      setupAudio();
+      try{
+        if(acx && acx.state==='suspended') await acx.resume();
+        await audio.play();
+        btnAudio.textContent='⏸ Audio';
+      }catch(e){
+        // Si el navegador bloquea, el botón queda habilitado para pulsarlo
+        btnAudio.textContent='▶️ Audio';
       }
-      say('Cámara iniciada');
-    }catch{ say('No se pudo iniciar cámara'); }
-  };
+    }
+    say('Target FOUND');
+  });
 
-  btnStart.onclick = startAR;
+  anchor.addEventListener('targetLost', ()=>{
+    v1.pause();
+    if(audio){ audio.pause(); btnAudio.textContent='▶️ Audio'; }
+    btnAudio.disabled=true; // deshabilita control sin target
+    say('Target LOST…');
+  });
 
-  anchor.addEventListener('targetFound', ()=>{ root.emit('pop',null,false); v1.play().catch(()=>{}); btnAudio.disabled=false; say('Target FOUND'); });
-  anchor.addEventListener('targetLost',  ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; say('Target LOST…'); });
-
-  // iOS: primer tap → iniciar cámara
+  // iOS: primer tap → iniciar cámara (desbloquea AudioContext pero no suena nada)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
