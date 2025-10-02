@@ -61,7 +61,6 @@
     console.log('[AR]',m);
   }
   function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
-
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', function(){
       var mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -73,21 +72,28 @@
       }
     });
   }
+  function getRay(){
+    var ent=document.getElementById('mouseRay');
+    return ent && ent.components ? ent.components.raycaster : null;
+  }
+  function refreshRay(){
+    // refresca la lista de objetos del raycaster (clave para que reconozca corazones/dragplane nuevos)
+    setTimeout(function(){
+      var rc=getRay(); if(rc && typeof rc.refreshObjects==='function') rc.refreshObjects();
+    },0);
+  }
 
   /* ---------- Cargar JSON ---------- */
   var cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
 
-  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){
-    return r.json();
-  }).then(function(CFG){
+  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){ return r.json(); }).then(function(CFG){
 
     /* ---------- MindAR ---------- */
     var scene = document.getElementById('scene');
     scene.setAttribute('mindar-image',
       'imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
-    // poner la cámara del dispositivo en cover
     new MutationObserver(function(){
       Array.prototype.forEach.call(document.querySelectorAll('video'), function(v){
         if(v.srcObject instanceof MediaStream){
@@ -103,7 +109,7 @@
 
     var anchor=document.getElementById('anchor');
     var root=document.createElement('a-entity'); anchor.appendChild(root);
-    var cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
+    var cal=(CFG.cal||{dx:0,dy:0,scale:1,rot:0});
     root.setAttribute('position', (cal.dx/PW)+' '+(-cal.dy/PW)+' 0');
     root.setAttribute('scale', cal.scale+' '+cal.scale+' 1');
     root.setAttribute('rotation', '0 0 '+cal.rot);
@@ -253,9 +259,7 @@
         if(audio.paused){
           if(acx && acx.state==='suspended'){ acx.resume().then(function(){ audio.play(); }); }
           else{ audio.play(); }
-        }else{
-          audio.pause();
-        }
+        }else{ audio.pause(); }
       }catch(e){}
     };
 
@@ -314,7 +318,6 @@
       for(var pass=0; pass<2; pass++){
         var baseY = (pass===0? yTop : yBot);
         var col = (pass===0? ((CFG.colors && CFG.colors.wave1)||'#13d77a') : ((CFG.colors && CFG.colors.wave2)||'#ffd54a'));
-
         for(var i=0;i<BARS;i++){
           var bandIndex = arr ? Math.min(arr.length-1, 2+i) : 0;
           var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
@@ -332,10 +335,8 @@
           ctx.fillStyle = col;
           if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
-          // peak-hold
           ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
-          if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
-          else         ctx.fillRect(x, baseY+peakY,   w, 2);
+          if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
           ctx.globalAlpha = 1;
 
           if(glow>0){
@@ -361,221 +362,153 @@
     }
     requestAnimationFrame(draw);
 
-    /* ---------- Corazones con física + drag ---------- */
-    // ===== Corazones con FÍSICA DE CONTACTO + DRAG + CHISPAS =====
-(function(){
-  var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+    /* ---------- Corazones con física + drag (+ raycaster refresh) ---------- */
+    (function(){
+      var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
 
-  // zona de juego (banda inferior del póster, ajusta si quieres)
-  var area={ x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
+      var area={ x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
+      var hearts=[], MAX_HEARTS=28, HEART_SIZE=0.11;
 
-  var hearts=[]; // {el,x,y,vx,vy,ax,ay,r,m,ang,w}
-  var MAX_HEARTS=28;
-  var HEART_SIZE=0.11; // ancho/alto en metros del plano (≈11 cm en AR)
-  var HEART_R=HEART_SIZE*0.5;
+      var GRAVITY_Y=-0.9, LINEAR_DAMP=0.995, RESTITUTION=0.58, FRICTION_WALL=0.02, ANG_DAMP=0.992;
 
-  // parámetros físicos
-  var GRAVITY_Y=-0.9;
-  var LINEAR_DAMP=0.995;     // rozamiento aire
-  var RESTITUTION=0.58;      // rebote
-  var FRICTION_WALL=0.02;    // pequeña pérdida tangencial en paredes
-  var ANG_DAMP=0.992;        // freno de giro
+      // plano invisible para drag
+      var dragPlane=document.createElement('a-plane');
+      dragPlane.classList.add('dragplane');
+      dragPlane.setAttribute('width',1);
+      dragPlane.setAttribute('height',H);
+      dragPlane.setAttribute('position','0 0 0.07');
+      dragPlane.setAttribute('material','color:#fff; transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+      root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
+      refreshRay();
 
-  // plano invisible para raycast de drag (si ya lo tenías, vale este)
-  var dragPlane=document.createElement('a-plane');
-  dragPlane.classList.add('dragplane');
-  dragPlane.setAttribute('width',1);
-  dragPlane.setAttribute('height',H);
-  dragPlane.setAttribute('position','0 0 0.07');
-  dragPlane.setAttribute('material','color:#fff; transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
-
-  function createSpark(x,y){
-    var s=document.createElement('a-plane');
-    s.setAttribute('width',0.06); s.setAttribute('height',0.06);
-    s.setAttribute('position', x+' '+y+' 0.061');
-    s.setAttribute('material','shader:flat; color:#ffffff; transparent:true; opacity:0.9; side:double');
-    s.setAttribute('animation__fade','property:material.opacity; to:0; dur:240; easing:linear');
-    s.setAttribute('rotation','0 0 0');
-    root.appendChild(s); setRO(s, 145, false, false);
-    setTimeout(function(){ s.remove(); }, 260);
-  }
-
-  function spawnHeart(x,y,sz){
-    if(typeof x!=='number') x=(area.x1+area.x2)/2;
-    if(typeof y!=='number') y=area.y2-0.05;
-    if(typeof sz!=='number') sz=HEART_SIZE;
-
-    var r=sz*0.5, m=r*r; // masa ~ área
-    var h=document.createElement('a-image');
-    h.setAttribute('src',HEART_SVG);
-    h.setAttribute('width',sz); h.setAttribute('height',sz);
-    h.setAttribute('position', x+' '+y+' 0.06');
-    h.setAttribute('material','transparent:true; alphaTest:0.01; side:double');
-    h.classList.add('ui3d','heart');
-    root.appendChild(h); setRO(h, 140, false, false);
-
-    hearts.push({
-      el:h, x:x, y:y,
-      vx:(Math.random()-0.5)*0.15,
-      vy:0.35+Math.random()*0.18,
-      ax:0, ay:0, r:r, m:m,
-      ang: (Math.random()*360),
-      w: (Math.random()-0.5)*60 // vel. angular (grados/s)
-    });
-
-    if(hearts.length>MAX_HEARTS){ var old=hearts.shift(); old.el.remove(); }
-  }
-
-  // —— utilidades drag ——
-  function getRay(){
-    var rayEnt=document.getElementById('mouseRay');
-    return rayEnt && rayEnt.components ? rayEnt.components.raycaster : null;
-  }
-  function pointerLocal(){
-    var ray=getRay(); var ints = (ray && ray.intersections) ? ray.intersections : [];
-    var hit=null;
-    for(var i=0;i<ints.length;i++){
-      var it=ints[i];
-      if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('dragplane')){ hit=it; break; }
-    }
-    if(!hit) return null;
-    var p=hit.point.clone();
-    root.object3D.worldToLocal(p);
-    if(p.x<area.x1) p.x=area.x1; if(p.x>area.x2) p.x=area.x2;
-    if(p.y<area.y1) p.y=area.y1; if(p.y>area.y2) p.y=area.y2;
-    return {x:p.x,y:p.y};
-  }
-  function heartFromEl(el){
-    for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; }
-    return null;
-  }
-
-  var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
-
-  function onPointerDown(){
-    var ray=getRay(); var ints = (ray && ray.intersections) ? ray.intersections : [];
-    var hitHeart=null;
-    for(var i=0;i<ints.length;i++){
-      var it=ints[i];
-      if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('heart')){ hitHeart=it; break; }
-    }
-    var p=pointerLocal();
-
-    if(hitHeart && p){
-      var h=heartFromEl(hitHeart.object.el); if(!h) return;
-      dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
-      lastPointer=p; lastTime=performance.now();
-      return;
-    }
-    // Tap en vacío: crea un corazón
-    if(p){ spawnHeart(p.x,p.y, HEART_SIZE*(0.9+Math.random()*0.25)); }
-  }
-  function onPointerUp(){ dragging=null; }
-
-  var sceneEl=document.getElementById('scene');
-  sceneEl.addEventListener('mousedown', onPointerDown);
-  sceneEl.addEventListener('mouseup', onPointerUp);
-  sceneEl.addEventListener('mouseleave', onPointerUp);
-  sceneEl.addEventListener('touchstart', onPointerDown, {passive:true});
-  sceneEl.addEventListener('touchend', onPointerUp, {passive:true});
-  sceneEl.addEventListener('touchcancel', onPointerUp, {passive:true});
-
-  // —— integrador + colisiones entre corazones ——
-  function solvePair(a,b){
-    var dx=b.x-a.x, dy=b.y-a.y;
-    var distSq=dx*dx+dy*dy;
-    var minDist=a.r+b.r;
-    if(distSq<=0) return;
-    var dist=Math.sqrt(distSq);
-    if(dist>=minDist) return;
-
-    // normal
-    var nx=dx/dist, ny=dy/dist;
-    var overlap=minDist-dist;
-
-    // separar (posición) mitad y mitad
-    var k=0.5;
-    a.x-=nx*overlap*k; a.y-=ny*overlap*k;
-    b.x+=nx*overlap*k; b.y+=ny*overlap*k;
-
-    // impulso (colisión elástica amortiguada)
-    var rvx=b.vx-a.vx, rvy=b.vy-a.vy;
-    var relVel = rvx*nx + rvy*ny;
-    if(relVel>0) return; // ya se separan
-
-    var e=RESTITUTION;
-    var j=-(1+e)*relVel/(1/a.m + 1/b.m);
-    var jx= j*nx, jy= j*ny;
-
-    a.vx -= jx/a.m; a.vy -= jy/a.m;
-    b.vx += jx/b.m; b.vy += jy/b.m;
-
-    // giro por fricción aproximada
-    a.w -= (jy*0.5 - jx*0.5)*20;
-    b.w += (jy*0.5 - jx*0.5)*20;
-
-    // chispita en choques fuertes
-    if(j>0.35){ createSpark(a.x+nx*a.r, a.y+ny*a.r); }
-  }
-
-  function physicsTick(){
-    var dt=1/60;
-
-    // drag activo (spring suave)
-    var p=pointerLocal();
-    if(dragging && p){
-      var nx=p.x+dragOffset.x, ny=p.y+dragOffset.y;
-      var now=performance.now();
-      var dtms=Math.max(16, now-lastTime);
-      // velocidad aproximada basada en desplazamiento
-      dragging.vx=(nx-dragging.x)/(dtms/1000);
-      dragging.vy=(ny-dragging.y)/(dtms/1000);
-      // seguir dedo (semi-stiff)
-      dragging.x = dragging.x*0.35 + nx*0.65;
-      dragging.y = dragging.y*0.35 + ny*0.65;
-      lastPointer=p; lastTime=now;
-    }
-
-    // integrar + paredes
-    for(var i=0;i<hearts.length;i++){
-      var h=hearts[i];
-      if(h!==dragging){
-        h.vy += GRAVITY_Y*dt;
-        h.vx *= LINEAR_DAMP; h.vy *= LINEAR_DAMP;
-        h.x  += h.vx*dt;     h.y  += h.vy*dt;
+      function createSpark(x,y){
+        var s=document.createElement('a-plane');
+        s.setAttribute('width',0.06); s.setAttribute('height',0.06);
+        s.setAttribute('position', x+' '+y+' 0.061');
+        s.setAttribute('material','shader:flat; color:#ffffff; transparent:true; opacity:0.9; side:double');
+        s.setAttribute('animation__fade','property:material.opacity; to:0; dur:240; easing:linear');
+        root.appendChild(s); setRO(s, 145, false, false);
+        setTimeout(function(){ s.remove(); }, 260);
       }
 
-      // paredes (con fricción tangencial)
-      if(h.x-h.r<area.x1){ h.x=area.x1+h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-      if(h.x+h.r>area.x2){ h.x=area.x2-h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-      if(h.y-h.r<area.y1){ h.y=area.y1+h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
-      if(h.y+h.r>area.y2){ h.y=area.y2-h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+      function spawnHeart(x,y,sz){
+        if(typeof x!=='number') x=(area.x1+area.x2)/2;
+        if(typeof y!=='number') y=area.y2-0.05;
+        if(typeof sz!=='number') sz=HEART_SIZE;
 
-      // giro
-      h.w *= ANG_DAMP;
-      h.ang += h.w*dt;
+        var r=sz*0.5, m=r*r;
+        var h=document.createElement('a-image');
+        h.setAttribute('src',HEART_SVG);
+        h.setAttribute('width',sz); h.setAttribute('height',sz);
+        h.setAttribute('position', x+' '+y+' 0.06');
+        h.setAttribute('material','transparent:true; alphaTest:0.01; side:double');
+        h.classList.add('ui3d','heart');
+        root.appendChild(h); setRO(h, 140, false, false);
 
-      // render
-      h.el.setAttribute('position', h.x+' '+h.y+' 0.06');
-      h.el.setAttribute('rotation', '0 0 '+h.ang);
-    }
+        hearts.push({ el:h, x:x, y:y, vx:(Math.random()-0.5)*0.15, vy:0.35+Math.random()*0.18,
+                      ax:0, ay:0, r:r, m:m, ang:(Math.random()*360), w:(Math.random()-0.5)*60 });
+        if(hearts.length>MAX_HEARTS){ var old=hearts.shift(); old.el.remove(); }
 
-    // colisiones O(n^2) (rápido para < 40)
-    for(var i2=0;i2<hearts.length;i2++){
-      for(var j2=i2+1;j2<hearts.length;j2++){
-        solvePair(hearts[i2], hearts[j2]);
+        refreshRay(); // 👈 MUY IMPORTANTE
       }
-    }
+      // expón para usarlo fuera (targetFound)
+      window._spawnHeart = spawnHeart;
 
-    requestAnimationFrame(physicsTick);
-  }
-  requestAnimationFrame(physicsTick);
+      function getPointer(){
+        var rc=getRay(); var ints = (rc && rc.intersections) ? rc.intersections : [];
+        var hit=null;
+        for(var i=0;i<ints.length;i++){
+          var it=ints[i];
+          if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('dragplane')){ hit=it; break; }
+        }
+        if(!hit) return null;
+        var p=hit.point.clone();
+        root.object3D.worldToLocal(p);
+        if(p.x<area.x1) p.x=area.x1; if(p.x>area.x2) p.x=area.x2;
+        if(p.y<area.y1) p.y=area.y1; if(p.y>area.y2) p.y=area.y2;
+        return {x:p.x,y:p.y};
+      }
+      function heartFromEl(el){
+        for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; }
+        return null;
+      }
 
-  // corazones de bienvenida al encontrar target (si ya lo tienes, ignora)
-  // for(var i0=0;i0<4;i0++) spawnHeart();
-  // ===== FIN bloque corazones =====
-})();
+      var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+
+      function onPointerDown(){
+        var rc=getRay(); var ints=(rc && rc.intersections)? rc.intersections : [];
+        var hitHeart=null;
+        for(var i=0;i<ints.length;i++){
+          var it=ints[i];
+          if(it.object && it.object.el && it.object.el.classList && it.object.el.classList.contains('heart')){ hitHeart=it; break; }
+        }
+        var p=getPointer();
+
+        if(hitHeart && p){
+          var h=heartFromEl(hitHeart.object.el); if(!h) return;
+          dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
+          lastPointer=p; lastTime=performance.now();
+          return;
+        }
+        if(p){ spawnHeart(p.x,p.y, HEART_SIZE*(0.9+Math.random()*0.25)); }
+      }
+      function onPointerUp(){ dragging=null; }
+
+      var sceneEl=document.getElementById('scene');
+      sceneEl.addEventListener('mousedown', onPointerDown);
+      sceneEl.addEventListener('mouseup', onPointerUp);
+      sceneEl.addEventListener('mouseleave', onPointerUp);
+      sceneEl.addEventListener('touchstart', onPointerDown, {passive:true});
+      sceneEl.addEventListener('touchend', onPointerUp, {passive:true});
+      sceneEl.addEventListener('touchcancel', onPointerUp, {passive:true});
+
+      function collidePair(a,b){
+        var dx=b.x-a.x, dy=b.y-a.y, distSq=dx*dx+dy*dy, minDist=a.r+b.r;
+        if(distSq<=0) return;
+        var dist=Math.sqrt(distSq); if(dist>=minDist) return;
+        var nx=dx/dist, ny=dy/dist, overlap=minDist-dist;
+        var k=0.5; a.x-=nx*overlap*k; a.y-=ny*overlap*k; b.x+=nx*overlap*k; b.y+=ny*overlap*k;
+        var rvx=b.vx-a.vx, rvy=b.vy-a.vy, relVel=rvx*nx + rvy*ny; if(relVel>0) return;
+        var j=-(1+RESTITUTION)*relVel/(1/a.m + 1/b.m), jx=j*nx, jy=j*ny;
+        a.vx-=jx/a.m; a.vy-=jy/a.m; b.vx+=jx/b.m; b.vy+=jy/b.m;
+        a.w-= (jy*0.5 - jx*0.5)*20; b.w+= (jy*0.5 - jx*0.5)*20;
+        if(j>0.35) createSpark(a.x+nx*a.r, a.y+ny*a.r);
+      }
+
+      function physics(){
+        var dt=1/60, p=getPointer();
+        if(dragging && p){
+          var nx=p.x+dragOffset.x, ny=p.y+dragOffset.y;
+          var now=performance.now(), dtms=Math.max(16, now-lastTime);
+          dragging.vx=(nx-dragging.x)/(dtms/1000);
+          dragging.vy=(ny-dragging.y)/(dtms/1000);
+          dragging.x = dragging.x*0.35 + nx*0.65;
+          dragging.y = dragging.y*0.35 + ny*0.65;
+          lastPointer=p; lastTime=now;
+        }
+
+        for(var i=0;i<hearts.length;i++){
+          var h=hearts[i];
+          if(h!==dragging){
+            h.vy += GRAVITY_Y*dt;
+            h.vx *= LINEAR_DAMP; h.vy *= LINEAR_DAMP;
+            h.x  += h.vx*dt;     h.y  += h.vy*dt;
+          }
+          if(h.x-h.r<area.x1){ h.x=area.x1+h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+          if(h.x+h.r>area.x2){ h.x=area.x2-h.r; h.vx*=-RESTITUTION; h.vy*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+          if(h.y-h.r<area.y1){ h.y=area.y1+h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+          if(h.y+h.r>area.y2){ h.y=area.y2-h.r; h.vy*=-RESTITUTION; h.vx*=1-FRICTION_WALL; h.w*=-ANG_DAMP; }
+          h.w *= ANG_DAMP; h.ang = (h.ang||0) + h.w*dt;
+          h.el.setAttribute('position', h.x+' '+h.y+' 0.06');
+          h.el.setAttribute('rotation', '0 0 '+h.ang);
+        }
+        for(var a=0;a<hearts.length;a++){
+          for(var b=a+1;b<hearts.length;b++) collidePair(hearts[a], hearts[b]);
+        }
+        requestAnimationFrame(physics);
+      }
+      requestAnimationFrame(physics);
+    })();
 
     /* ---------- Botón cámara robusto ---------- */
     function ensureSceneLoaded(){
@@ -609,49 +542,29 @@
       btnStart.disabled=true;
       log('Pidiendo cámara…');
       navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false})
-        .then(function(s){
-          s.getTracks().forEach(function(t){ t.stop(); });
-          return ensureSceneLoaded();
-        })
+        .then(function(s){ s.getTracks().forEach(function(t){ t.stop(); }); return ensureSceneLoaded(); })
         .then(ensureMindARReady)
         .then(startMindAR)
-        .then(function(){
-          btnStart.textContent='Cámara lista';
-          log('Cámara iniciada');
-        })
-        .catch(function(e){
-          btnStart.disabled=false;
-          log('No se pudo iniciar la cámara ('+(e.name||'')+' '+(e.message||e)+')');
-        });
+        .then(function(){ btnStart.textContent='Cámara lista'; log('Cámara iniciada'); })
+        .catch(function(e){ btnStart.disabled=false; log('No se pudo iniciar la cámara ('+(e.name||'')+' '+(e.message||e)+')'); });
     });
 
     anchor.addEventListener('targetFound', function(){
       v1.play().then(function(){ setTimeout(checkBlackFallback, 200); }).catch(function(){});
-      setupAudio();
-      try{
-        if(acx && acx.state==='suspended'){ acx.resume().then(function(){ audio.play().catch(function(){}); }); }
-        else if(audio){ audio.play().catch(function(){}); }
-      }catch(e){}
-      document.getElementById('btnAudio').disabled=false;
-      for(var i=0;i<4;i++) spawnHeart();
+      // corazones de bienvenida (usa la función expuesta global)
+      if(window._spawnHeart){ for(var i=0;i<4;i++) window._spawnHeart(); }
       log('Target FOUND');
     });
 
     anchor.addEventListener('targetLost', function(){
       try{ v1.pause(); }catch(e){}
-      if(audio){ try{ audio.pause(); }catch(e){} btnAudio.textContent='▶️ Audio'; }
       log('Target LOST…');
     });
 
     // auto-arranque con primer gesto (iOS)
-    window.addEventListener('pointerup', function(){
-      try{ v1.play(); }catch(e){}
-      btnStart.click();
-    }, {once:true,passive:true});
+    window.addEventListener('pointerup', function(){ try{ v1.play(); }catch(e){} btnStart.click(); }, {once:true,passive:true});
 
-  }).catch(function(e){
-    log('❗ No pude cargar el JSON: '+(e.message||e));
-  });
+  }).catch(function(e){ log('❗ No pude cargar el JSON: '+(e.message||e)); });
 })();
 </script>
 </body>
