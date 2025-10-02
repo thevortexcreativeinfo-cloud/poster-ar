@@ -54,30 +54,29 @@
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  // ---------- Helper: render order y depth ----------
-  function setRO(el, renderOrder, writeDepth){
+  /* ---------- util: forzar orden de render y depth ---------- */
+  function setRO(el, renderOrder, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
       mesh.renderOrder = renderOrder;
       if(mesh.material){
-        mesh.material.depthTest  = !!writeDepth;
-        mesh.material.depthWrite = !!writeDepth;
+        mesh.material.depthTest  = !!depthTest;
+        mesh.material.depthWrite = !!depthWrite;
         mesh.material.needsUpdate = true;
       }
     });
   }
 
-  // ---------- Carga JSON obligatoria ----------
+  /* ---------- Cargar JSON ---------- */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch{ alert('No pude cargar el JSON de cliente'); return; }
 
-  // ---------- MindAR ----------
+  /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+  scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
   // Cámara en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
@@ -92,45 +91,45 @@
   const anchor = document.getElementById('anchor');
   const root = document.createElement('a-entity'); anchor.appendChild(root);
   const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
-  function applyCal(){
-    root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
-    root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
-    root.setAttribute('rotation', `0 0 ${cal.rot}`);
-  }
+  function applyCal(){ root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`); root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`); root.setAttribute('rotation', `0 0 ${cal.rot}`); }
   applyCal();
 
-  // ---------- Papel blanco (opaco, detrás de todo) ----------
+  /* ---------- Papel blanco (detrás de todo) ---------- */
   const paper = document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper);
-  setRO(paper, 50, false);
+  setRO(paper, 10, false, false);
 
-  // ---------- Marco + Vídeo ----------
-  const v1 = document.getElementById('v1'); v1.src = CFG.video||'';
+  /* ---------- Marco + Vídeo ---------- */
+  const v1 = document.getElementById('v1');
+  // asegurar flags de autoplay móvil
+  v1.muted = true; v1.playsInline = true; v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
+  v1.crossOrigin = 'anonymous';
+  v1.src = CFG.video || '';
+  v1.load();
+
   const vslot = CFG.slotVid;
   const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-  // Marco (dos planos). No deben tapar el vídeo.
-  const outer = document.createElement('a-plane');
-  outer.setAttribute('width', u.wn*1.04); outer.setAttribute('height', u.hn*1.04);
-  outer.setAttribute('position', `${u.cx} ${u.cy} 0.00`);
-  outer.setAttribute('material','shader:flat; color:#0b0b0b; opacity:0.95; side:double');
-  root.appendChild(outer); setRO(outer, 180, false);
+  const frameOuter = document.createElement('a-plane');
+  frameOuter.setAttribute('width', u.wn*1.04); frameOuter.setAttribute('height', u.hn*1.04);
+  frameOuter.setAttribute('position', `${u.cx} ${u.cy} 0.00`);
+  frameOuter.setAttribute('material','shader:flat; color:#0b0b0b; opacity:0.95; side:double');
+  root.appendChild(frameOuter); setRO(frameOuter, 20, false, false);
 
-  const inner = document.createElement('a-plane');
-  inner.setAttribute('width', u.wn*1.00); inner.setAttribute('height', u.hn*1.00);
-  inner.setAttribute('position', `${u.cx} ${u.cy} 0.005`);
-  inner.setAttribute('material','shader:flat; color:#dfe9ef; opacity:1; side:double');
-  root.appendChild(inner); setRO(inner, 200, false);
+  const frameInner = document.createElement('a-plane');
+  frameInner.setAttribute('width', u.wn*1.00); frameInner.setAttribute('height', u.hn*1.00);
+  frameInner.setAttribute('position', `${u.cx} ${u.cy} 0.005`);
+  frameInner.setAttribute('material','shader:flat; color:#dfe9ef; opacity:1; side:double');
+  root.appendChild(frameInner); setRO(frameInner, 30, false, false);
 
-  // Vídeo (encima de marco). ÚNICO con depth activado.
-  const vPlane=document.createElement('a-plane');
+  const vPlane=document.createElement('a-plane'); // VÍDEO
   vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.03`);
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
   vPlane.setAttribute('material','shader:flat; src:#v1; side:double; transparent:false');
-  root.appendChild(vPlane); setRO(vPlane, 900, true);
+  root.appendChild(vPlane); setRO(vPlane, 90, true, true);
 
   function coverVideo(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
@@ -141,9 +140,10 @@
     vPlane.__base = {ox,oy,rx,ry,tex};
   }
   vPlane.addEventListener('materialtextureloaded', coverVideo);
-  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); coverVideo(); }, {once:true});
+  v1.addEventListener('loadeddata', coverVideo, {once:true});
+  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); }, {once:true});
 
-  // ---------- Canvas overlay (textos + barra) detrás del vídeo ----------
+  /* ---------- Canvas overlay (textos + barra + waveform) detrás del vídeo ---------- */
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx = canvas.getContext('2d');
@@ -153,8 +153,11 @@
   overlayP.setAttribute('position','0 0 0.0');  // por debajo del vídeo
   overlayP.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlayP);
-  setRO(overlayP, 120, false);
-  overlayP.addEventListener('loaded', ()=>{ const tex = new AFRAME.THREE.CanvasTexture(canvas); const m=overlayP.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlayP.__tex=tex; });
+  setRO(overlayP, 25, false, false);
+  overlayP.addEventListener('loaded', ()=>{
+    const tex = new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate = true;
+    const m=overlayP.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlayP.__tex=tex;
+  });
 
   const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
   function fitFontFor(text, wpx, hpx, weight){
@@ -165,19 +168,25 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  // ---------- Audio / UI ----------
+  /* ---------- Audio / UI ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
-    try{ const AC=window.AudioContext||window.webkitAudioContext; acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64; const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);}catch{}
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      acx=new AC();
+      analyser=acx.createAnalyser(); analyser.fftSize=128;
+      const src=acx.createMediaElementSource(audio);
+      src.connect(analyser); analyser.connect(acx.destination);
+    }catch{}
     audio.addEventListener('play',  ()=>btnAudio.textContent='⏸ Audio');
     audio.addEventListener('pause', ()=>btnAudio.textContent='▶️ Audio');
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  // Zona táctil Play/Pause (no tapa el vídeo)
+  // Play táctil opcional (slotPlay) sin tapar vídeo
   if(CFG.slotPlay){
     const pb=px2(CFG.slotPlay.x,CFG.slotPlay.y,CFG.slotPlay.w,CFG.slotPlay.h);
     const hit = document.createElement('a-circle');
@@ -185,13 +194,17 @@
     hit.setAttribute('radius', Math.min(pb.wn,pb.hn)/2.1);
     hit.setAttribute('position', `${pb.cx} ${pb.cy} 0.015`);
     hit.setAttribute('material','shader:flat; color:#000; opacity:0; transparent:true');
-    hit.setAttribute('animation__tap','property:scale; from:0.95 0.95 1; to:1 1 1; dur:120; easing:easeOutQuad');
-    root.appendChild(hit); setRO(hit, 140, false);
-    hit.addEventListener('click', async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } hit.emit('animation__tap'); if(navigator.vibrate) navigator.vibrate(15);}catch{} });
+    root.appendChild(hit); setRO(hit, 40, false, false);
+    hit.addEventListener('click', async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } if(navigator.vibrate) navigator.vibrate(15);}catch{} });
   }
 
-  // ---------- Dibujo (título, artista y barra 2D) ----------
+  /* ---------- DIBUJO (título, artista, barra y waveform 2D) ---------- */
+  const bars = 48;                       // nº de columnas del espectro
+  const waveHeight = Math.round(34*Cw/2048);
+  const waveGap = Math.round(22*Cw/2048);
+
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
@@ -210,12 +223,13 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra 2D
+    // Barra base
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
+    // Progreso
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -223,7 +237,6 @@
     grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-
     // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
@@ -232,12 +245,30 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    overlayP.__tex && (overlayP.__tex.needsUpdate = true);
+    // Waveform doble (arriba/abajo)
+    const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
+    if(arr) analyser.getByteFrequencyData(arr);
+    const step=pbw/bars;
+    const byTop = pby - waveGap, byBot = pby + pbh + waveGap;
+    for(let pass=0; pass<2; pass++){
+      const baseY = (pass===0? byTop : byBot);
+      for(let i=0;i<bars;i++){
+        let v = 0.22 + 0.78*Math.abs(Math.sin((performance.now()/320)+(i*0.33))); // fallback
+        if(arr){ v = (arr[2+i]||0)/255; }
+        const h = Math.max(4, Math.round(v*waveHeight));
+        const x = Math.round(pbx + i*step + step*0.18);
+        const w = Math.max(2, Math.round(step*0.64));
+        ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+        (pass===1) ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
+      }
+    }
+
+    if(overlayP.__tex) overlayP.__tex.needsUpdate = true;
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  // ---------- Ken Burns suave ----------
+  /* ---------- Ken Burns suave en el vídeo ---------- */
   function kenBurns(){
     const B=vPlane.__base; if(!B){ requestAnimationFrame(kenBurns); return; }
     const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
@@ -248,7 +279,7 @@
   }
   requestAnimationFrame(kenBurns);
 
-  // ---------- Estados / UI ----------
+  /* ---------- Estados / UI ---------- */
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
@@ -261,15 +292,22 @@
     }catch(e){ btnStart.disabled=false; log('No se pudo iniciar cámara'); }
   };
 
-  anchor.addEventListener('targetFound', ()=>{
-    v1.play().catch(()=>{}); document.getElementById('btnAudio').disabled=false; log('Target FOUND');
-    if(CFG.autoplay){ setupAudio(); audio.play().catch(()=>{}); }
+  anchor.addEventListener('targetFound', async ()=>{
+    // vídeo
+    try{ await v1.play(); }catch{}
+    document.getElementById('btnAudio').disabled=false;
+    log('Target FOUND');
+
+    // audio autoplay al detectar
+    setupAudio();
+    try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
   });
+
   anchor.addEventListener('targetLost',  ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // Auto-arranque con primer gesto (iOS)
+  // Arranque con primer gesto (iOS)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
