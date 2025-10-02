@@ -8,14 +8,16 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
+
   /* Cámara en cover detrás del canvas */
   video[playsinline]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
+
   /* Canvas WebGL encima de la cámara */
-  a-scene{position:fixed!important;inset:0!important;z-index:2!important}
-  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none}
+  a-scene{position:fixed!important;inset:0!important;z-index:2!important; pointer-events:none!important;}
+  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:none!important}
 
   /* UI / botones (aseguramos que reciban eventos) */
   .ui{
@@ -78,6 +80,11 @@
 </a-scene>
 
 <script>
+/* ==== Captura errores temprano (si algo falla, lo verás) ==== */
+const dbg = document.getElementById('dbg');
+const log=(m)=>{ dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
+window.addEventListener('error', e=>{ log('JS ERROR: '+(e?.message||e)); });
+
 /* ===== Config fija (tus URLs) ===== */
 const BASE = {
   t: 'https://res.cloudinary.com/dtge9nklw/raw/upload/v1759341741/targets_10_h3yoq9.mind',
@@ -85,7 +92,7 @@ const BASE = {
   pw: 2481, ph: 3508,
   video: {
     src: 'https://res.cloudinary.com/dtge9nklw/video/upload/f_mp4,vc_h264,ac_aac,br_1200k,vs_30,w_1280/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4',
-    x: 296, y: 316, w: 1890, h: 1682   // rectángulo de vídeo en px (sobre el diseño base)
+    x: 296, y: 316, w: 1890, h: 1682
   },
   texts: [
     { value:'Shape of You', x:200, y:2150, w:2080, h:190, align:'center', color:'#000000' },
@@ -104,23 +111,22 @@ const CONF = {
 };
 /* ================================= */
 
-const dbg = document.getElementById('dbg');
-const log=(m)=>{ dbg.textContent = m + ' · ' + new Date().toLocaleTimeString(); console.log('[AR]',m); };
-
 const scene=document.getElementById('scene');
 scene.setAttribute('mindar-image', `imageTargetSrc: ${CONF.t}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0); }catch(e){} });
 
-/* Cámara en cover asegurada (por si cambia el DOM) */
+/* Cámara en cover asegurada */
 new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
   if(v.srcObject instanceof MediaStream){
     Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
   }
 });}).observe(document.documentElement,{subtree:true,childList:true});
 
-/* Assets */
-overlayImg.src = CONF.d || '';
-const v1=document.getElementById('v1'); v1.src=CONF.video.src;
+/* Assets – ¡selección segura por ID! */
+const overlayImgEl = document.getElementById('overlayImg');
+const v1El        = document.getElementById('v1');
+overlayImgEl.src  = CONF.d || '';
+v1El.src          = CONF.video.src;
 
 /* Geometría */
 const H = CONF.ph/CONF.pw;
@@ -155,13 +161,13 @@ root.appendChild(vPlane);
 
 /* COVER de la textura del vídeo */
 function cover(){
-  const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
-  const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
+  const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1El.videoWidth) return;
+  const tex=mesh.material.map, vr=v1El.videoWidth/v1El.videoHeight, rr=v.w/v.h; let rx=1,ry=1,ox=0,oy=0;
   if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
   tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
 }
 vPlane.addEventListener('materialtextureloaded',cover);
-v1.addEventListener('loadedmetadata',()=>{ v1.play().catch(()=>{}); cover(); },{once:true});
+v1El.addEventListener('loadedmetadata',()=>{ v1El.play().catch(()=>{}); cover(); },{once:true});
 
 /* Textos por canvas → textura */
 function addText(slot){
@@ -206,8 +212,8 @@ if(BASE.audio){ prog=makeProgress(BASE.progress.x,BASE.progress.y,BASE.progress.
 function tryAudio(){ if(!audio) return; if(visible && userOK){ audio.play().catch(()=>{}); btnSound.hidden=true; } else { audio.pause(); if(visible && !userOK) btnSound.hidden=false; }}
 
 /* Eventos de tracking */
-anchor.addEventListener('targetFound', ()=>{ visible=true; v1.play().catch(()=>{}); tryAudio(); log('Target FOUND'); });
-anchor.addEventListener('targetLost',  ()=>{ visible=false; v1.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST'); });
+anchor.addEventListener('targetFound', ()=>{ visible=true; v1El.play().catch(()=>{}); tryAudio(); log('Target FOUND'); });
+anchor.addEventListener('targetLost',  ()=>{ visible=false; v1El.pause(); if(audio) audio.pause(); if(audio && userOK) btnSound.hidden=false; log('Target LOST'); });
 
 /* Ticks (progreso audio) */
 function tick(){
@@ -234,6 +240,7 @@ async function startAR() {
     console.log('[AR] Cámara iniciada');
   } catch(e) {
     console.warn('[AR] No se pudo iniciar cámara:', e);
+    log('Error al iniciar cámara (permisos o navegador)');
   }
 }
 
@@ -242,7 +249,7 @@ btnStart.addEventListener('click', startAR);
 
 // 2) Auto-start cuando la escena está lista
 scene.addEventListener('loaded', () => {
-  const AUTO = true;           // pon en false si no quieres auto-arranque
+  const AUTO = true;
   if (AUTO) startAR();
 });
 
