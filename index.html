@@ -36,7 +36,7 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
+    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d,.heart; far: 3"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -55,11 +55,12 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
-  catch{ alert('No pude cargar el JSON de cliente'); return; }
+  catch(e){ alert('No pude cargar el JSON de cliente'); console.error(e); return; }
 
   /* MindAR */
   const scene = document.getElementById('scene');
@@ -82,7 +83,7 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* Póster: papel + sombra suave (3D) */
+  /* Póster: papel + sombra suave */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
@@ -96,7 +97,7 @@
   drop.setAttribute('material','shader:flat; color:#000; opacity:.18; transparent:true; side:double; depthTest:false; depthWrite:false');
   root.appendChild(drop); setRO(drop, 1, false, false);
 
-  /* Marco + VÍDEO con VideoTexture manual (evita “negro”) */
+  /* Marco + VÍDEO con VideoTexture */
   const v1=document.getElementById('v1');
   v1.muted=true; v1.playsInline=true; v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
   v1.crossOrigin='anonymous'; v1.src = CFG.video||''; v1.load();
@@ -121,11 +122,11 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false');
   root.appendChild(vPlane); setRO(vPlane, 90, true, true);
 
-  // borde “neón” alrededor del vídeo (4 tiras finas)
+  // “neón” alrededor del vídeo
   const glowCol1 = CFG.colors?.wave1 || '#13d77a';
   const glowCol2 = CFG.colors?.wave2 || '#ffd54a';
   (function neon(){
-    const t=0.004; // grosor
+    const t=0.004;
     const strips=[
       {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
       {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy-u.hn/2-t/2},
@@ -143,7 +144,7 @@
     });
   })();
 
-  // asignar VideoTexture manual
+  // Asignar VideoTexture (evita vídeo negro)
   function setVideoTexture(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
     const tex = new AFRAME.THREE.VideoTexture(v1);
@@ -186,7 +187,7 @@
 
   /* Audio */
   const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null;
+  let audio=null, acx=null, analyser=null, lastBeat=0;
   function setupAudio(){
     if(audio) return;
     audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -203,7 +204,7 @@
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // texto
+    // Título y artista
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH), tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
@@ -215,7 +216,7 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // barra
+    // barra progreso
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH), pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
@@ -232,28 +233,27 @@
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left'; ctx.font=`700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`; ctx.fillText(cur, pbx, pby-10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby-10);
 
-    // partícula que recorre el progreso
+    // partícula del progreso
     ctx.beginPath(); ctx.arc(kx, ky + pbh*1.8, Math.max(3, Math.round(pbh*0.9/2)), 0, Math.PI*2);
     ctx.fillStyle=(CFG.colors?.wave1||'#13d77a'); ctx.globalAlpha=.85; ctx.fill(); ctx.globalAlpha=1;
 
     // waveform doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null); if(arr) analyser.getByteFrequencyData(arr);
     const step=pbw/bars, yTop=pby - gap, yBot=pby + pbh + gap;
+    let level=0;
     for(let pass=0; pass<2; pass++){
       const baseY=(pass===0? yTop : yBot), col=(pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
       for(let i=0;i<bars;i++){
         let v=0.22+0.78*Math.abs(Math.sin((performance.now()/320)+(i*0.33)));
-        if(arr){ v=(arr[2+i]||0)/255; }
+        if(arr){ v=(arr[2+i]||0)/255; level+=v; }
         const h=Math.max(4,Math.round(v*waveH)), x=Math.round(pbx + i*step + step*0.18), w=Math.max(2,Math.round(step*0.64));
         ctx.fillStyle=col; (pass===1)? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
       }
     }
-
-    // flourish inferior (sonrisa respirando)
-    const fx = pbx + pbw/2, fy = pby + pbh + gap + waveH + 16;
-    const fW = Math.min(pbw*0.46, 540), fH = 16 + 4*Math.sin(performance.now()/700);
-    ctx.beginPath(); ctx.ellipse(fx, fy, fW/2, Math.max(6,fH/2), 0, Math.PI, 0, true);
-    ctx.lineWidth = 10; ctx.strokeStyle = (CFG.colors?.wave1||'#13d77a'); ctx.globalAlpha=.25; ctx.stroke(); ctx.globalAlpha=1;
+    level /= (arr? bars : 1);
+    // “beat” -> generar corazón
+    const now = performance.now();
+    if(analyser && level>0.55 && (now-lastBeat)>260){ lastBeat=now; spawnHeart(); }
 
     if(overlay.__tex) overlay.__tex.needsUpdate=true;
     requestAnimationFrame(draw);
@@ -271,6 +271,45 @@
   }
   requestAnimationFrame(kenBurns);
 
+  /* Corazones “con física” ligera y toque para impulsarlos */
+  const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+  const hearts=[]; // {el,x,y,vx,vy}
+  // zona de juego: banda inferior del póster
+  const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
+
+  function spawnHeart(){
+    const x = (area.x1+area.x2)/2 + (Math.random()-0.5)*0.2;
+    const y = area.y2 - 0.05;
+    const h = document.createElement('a-image');
+    h.setAttribute('src', HEART_SVG);
+    h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
+    h.setAttribute('position', `${x} ${y} 0.06`);
+    h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
+    h.classList.add('ui3d','heart');
+    root.appendChild(h); setRO(h, 140, false, false);
+    const obj={el:h, x, y, vx:(Math.random()-0.5)*0.12, vy:0.35+Math.random()*0.20};
+    hearts.push(obj);
+    h.addEventListener('click', ()=>{ obj.vx += (Math.random()-0.5)*0.6; obj.vy += 0.6; if(navigator.vibrate) navigator.vibrate(15); });
+    // autodestruir cuando hay demasiados
+    if(hearts.length>20){ const old=hearts.shift(); old.el.remove(); }
+  }
+
+  (function heartsTick(){
+    const g=-0.9, damp=0.55, dt=1/60;
+    hearts.forEach(o=>{
+      o.vy += g*dt;
+      o.x += o.vx*dt;
+      o.y += o.vy*dt;
+      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+      o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
+      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300)*6}`);
+    });
+    requestAnimationFrame(heartsTick);
+  })();
+
   /* Estados / UI */
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
@@ -281,7 +320,11 @@
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       btnStart.textContent='Cámara lista';
-    }catch(e){ btnStart.disabled=false; log('No se pudo iniciar cámara'); }
+    }catch(e){
+      btnStart.disabled=false;
+      log(`No se pudo iniciar cámara: ${e.name||''} ${e.message||e}`);
+      alert('No se pudo abrir la cámara.\nAsegúrate de:\n• Permitir permisos de cámara\n• Abrir por HTTPS (GitHub Pages ya lo es)\n• Cerrar otras apps que usen cámara\n• En Brave u otros, desactiva el bloqueo para esta página');
+    }
   };
 
   anchor.addEventListener('targetFound', async ()=>{
@@ -290,11 +333,14 @@
     log('Target FOUND');
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
+    // corazón de bienvenida
+    spawnHeart(); spawnHeart();
   });
   anchor.addEventListener('targetLost', ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
+  // auto con primer gesto (iOS)
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
 })();
 </script>
