@@ -3,16 +3,15 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Universal</title>
+<title>Poster AR · Universal (multi-target)</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás (el <video> del stream) */
-  video{background:#000}
+  /* Cámara detrás (stream) */
   video[playsinline]{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important
+    object-fit:cover!important;z-index:0!important;background:#000!important
   }
   /* WebGL delante (interactivo) */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
@@ -36,7 +35,7 @@
 </div>
 <div id="dbg" class="dbg">Cargando…</div>
 
-<!-- Calibración (muestra con ?cal=1) -->
+<!-- Calibración (mostrar con ?cal=1) -->
 <div class="cal" id="cal" style="display:none">
   <button data-a="dx-" class="btn">X−</button><button data-a="dx+" class="btn">X+</button>
   <button data-a="dy-" class="btn">Y−</button><button data-a="dy+" class="btn">Y+</button>
@@ -54,16 +53,15 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000" id="assets">
-    <!-- Tu vídeo de contenido. El src lo asigna el JS desde el cfg -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Cursor para click/tap en 3D -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
   </a-camera>
 
-  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
+  <!-- Contenedor donde crearemos anchors dinámicos a0..a7 -->
+  <a-entity id="anchors"></a-entity>
 </a-scene>
 
 <script>
@@ -89,7 +87,7 @@
     slotBar:   {x:300, y:2640, w:2060, h:26},
     slotPlay:  {x:1050, y:2920, w:380,  h:380},
     cal:{dx:-30, dy:432, scale:1.185, rot:-0.2},
-    autoplayOnFound:true,   // 🔊 Reproduce SOLO cuando se detecta el target
+    autoplayOnFound:true,
     parallax:false, showCal:false
   };
 
@@ -111,231 +109,220 @@
 
   /* ===== A-Frame / MindAR ===== */
   const scene  = document.getElementById('scene');
-  const anchor = document.getElementById('anchor');
   scene.setAttribute('mindar-image', `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
-
-  // Diagnóstico MindAR
   scene.addEventListener('arReady', ()=>say('Cámara OK (MindAR listo)'));
   scene.addEventListener('arError', ()=>say('❗ Error de cámara/permisos MindAR'));
 
-  // Asegurar el <video> de cámara en cover (sólo si es stream)
+  // Forzar <video> stream a cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0'});
     }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  /* ===== Construcción del contenido (vídeo + overlay) ===== */
-  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
+  /* ===== Anchors 0..7 (multi-target) ===== */
+  const anchorsHolder = document.getElementById('anchors');
+  const anchors = [];
+  for(let i=0;i<8;i++){
+    const a=document.createElement('a-entity');
+    a.setAttribute('mindar-image-target', `targetIndex:${i}`);
+    a.id='a'+i;
+    anchorsHolder.appendChild(a);
+    anchors.push(a);
+  }
+
+  /* ===== Variables de escena ===== */
+  const PW=CFG.pw, PH=CFG.ph, H=PH/PW;
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
-  const root=document.createElement('a-entity'); anchor.appendChild(root);
-  root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
 
-  const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
-  function applyCal(){
-    root.setAttribute('position', `${(cal.dx||0)/PW} ${-(cal.dy||0)/PW} 0`);
-    root.setAttribute('scale', `${cal.scale||1} ${cal.scale||1} 1`);
-    root.setAttribute('rotation', `0 0 ${cal.rot||0}`);
-    const ro = document.getElementById('readout');
-    if(ro) ro.textContent = `dx:${Math.round(cal.dx||0)} dy:${Math.round(cal.dy||0)} scale:${(cal.scale||1).toFixed(3)} rot:${(cal.rot||0)}`;
-  }
-  applyCal();
+  let built=false, activeAnchor=null, root=null, vPlane=null, overlayP=null;
+  const v1 = document.getElementById('v1'); v1.src = CFG.video || '';
 
-  // Vignette sutil
-  const vignette=document.createElement('a-plane');
-  vignette.setAttribute('width', 1.14);
-  vignette.setAttribute('height', H*1.14);
-  vignette.setAttribute('position','0 0 -0.03');
-  vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
-  root.appendChild(vignette);
-
-  // Vídeo
-  const v1 = document.getElementById('v1');
-  v1.src = CFG.video || '';
-  const vslot = CFG.slotVid;
-  const u = px2(vslot.x,vslot.y,vslot.w,vslot.h);
-  const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);
-  vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
-  root.appendChild(vPlane);
-
-  function setCover(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
-    const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
-    let rx=1,ry=1,ox=0,oy=0;
-    if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
-    vPlane.__base = {ox,oy,rx,ry,tex};
-  }
-  vPlane.addEventListener('materialtextureloaded', setCover);
-  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
-
-  // Canvas overlay (títulos + barra/wave)
-  const Cw = 2048, Ch = Math.round(Cw*H);
-  const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-  const ctx = canvas.getContext('2d');
-  const overlayP = document.createElement('a-plane');
-  overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
-  overlayP.setAttribute('position','0 0 0.02');
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
-  root.appendChild(overlayP);
-  overlayP.addEventListener('loaded', ()=>{
-    const tex = new AFRAME.THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    const mesh = overlayP.getObject3D('mesh');
-    mesh.material.map = tex; mesh.material.needsUpdate = true;
-    overlayP.__tex = tex;
-  });
-
-  const titleSlot = CFG.slotTitle, artistSlot = CFG.slotArtist, barSlot = CFG.slotBar;
-  function fitFontFor(text, wpx, hpx, weight){
-    let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.74);
-    while(lo<=hi){
-      const mid=(lo+hi>>1);
-      ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
-      if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1;
-    }
-    return best;
-  }
-  const titlePx = fitFontFor(CFG.title||'',  titleSlot.w*Cw/PW,   titleSlot.h*Ch/PH, 800);
-  const artistPx= fitFontFor(CFG.artist||'', artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
-
-  // Audio (se reproduce SOLO al detectar)
+  // Audio (sólo cuando hay target)
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
     if(audio) return;
     audio = new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize = 64;
+      acx=new AC(); analyser=acx.createAnalyser(); analyser.fftSize=64;
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
     }catch(e){}
   }
 
-  // Dibujo overlay (título/artista/barra/wave)
-  const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+  function buildContent(parent){
+    if(built) return;
+    built=true; activeAnchor=parent;
 
-  function draw(){
-    ctx.clearRect(0,0,Cw,Ch);
+    root=document.createElement('a-entity');
+    root.setAttribute('animation__pop','property:scale; from:0.96 0.96 1; to:1 1 1; dur:360; easing:easeOutQuad; startEvents:pop');
+    parent.appendChild(root);
 
-    // Título
-    const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
-          tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-    ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
-
-    // Artista
-    const ax = Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
-          aw = Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
-    ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-    ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
-
-    // Barra
-    const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
-          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
-    ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
-    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
-
-    let p=0, cur='0:00', dur='0:00';
-    if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
-    const fw=Math.max(2, Math.floor(pbw*p));
-    const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
-    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
-    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
-    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-
-    // Knob + tiempos
-    const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
-    const pulse=1+0.10*Math.sin(performance.now()/220);
-    ctx.beginPath(); ctx.arc(kx,ky,r*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-
-    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-    ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(cur, pbx, pby - 10);
-    ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
-
-    // Waveform doble
-    let arr = null;
-    if(analyser){ arr = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); }
-    const nBars = CFG.waveBars || 48;
-    const step=pbw/nBars, byTop = pby - waveGap, byBot = pby + pbh + waveGap;
-    ctx.save();
-    for(let pass=0; pass<2; pass++){
-      const baseY = (pass===0? byTop : byBot);
-      const mirror = (pass===1);
-      for(let i=0;i<nBars;i++){
-        let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
-        if(arr){ v = (arr[2+i]||0)/255; }
-        const h = Math.max(4, Math.round(v*waveTopHeight));
-        const x = Math.round(pbx + i*step + step*0.18);
-        const w = Math.max(2, Math.round(step*0.64));
-        ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
-        mirror ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
-      }
+    const cal = Object.assign({dx:0,dy:0,scale:1,rot:0}, (CFG.cal||{}));
+    function applyCal(){
+      root.setAttribute('position', `${(cal.dx||0)/PW} ${-(cal.dy||0)/PW} 0`);
+      root.setAttribute('scale', `${cal.scale||1} ${cal.scale||1} 1`);
+      root.setAttribute('rotation', `0 0 ${cal.rot||0}`);
+      const ro = document.getElementById('readout');
+      if(ro) ro.textContent = `dx:${Math.round(cal.dx||0)} dy:${Math.round(cal.dy||0)} scale:${(cal.scale||1).toFixed(3)} rot:${(cal.rot||0)}`;
     }
-    ctx.restore();
+    applyCal();
 
-    overlayP.__tex && (overlayP.__tex.needsUpdate = true);
-    requestAnimationFrame(draw);
-  }
-  requestAnimationFrame(draw);
+    // Vignette
+    const vignette=document.createElement('a-plane');
+    vignette.setAttribute('width', 1.14);
+    vignette.setAttribute('height', H*1.14);
+    vignette.setAttribute('position','0 0 -0.03');
+    vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
+    root.appendChild(vignette);
 
-  // Ken-Burns suave
-  function kenBurns(){
-    const B=vPlane.__base; if(!B) return;
-    const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
-    const ox=Math.max(0, Math.min(1-B.rx, B.ox + dx));
-    const oy=Math.max(0, Math.min(1-B.ry, B.oy + dy));
-    B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
-    requestAnimationFrame(kenBurns);
-  }
-  requestAnimationFrame(kenBurns);
+    // Vídeo
+    const vslot=CFG.slotVid; const u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
+    vPlane=document.createElement('a-plane');
+    vPlane.setAttribute('width',u.wn); vPlane.setAttribute('height',u.hn);
+    vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.12`);
+    vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:true; opacity:1');
+    root.appendChild(vPlane);
 
-  // Parallax opcional
-  if(CFG.parallax){
-    (function parallaxTick(){
-      if(scene?.camera){
-        const obj=root.object3D, cam3=scene.camera;
-        const dx=cam3.position.x - obj.position.x, dy=cam3.position.y - obj.position.y, max=0.8;
-        obj.rotation.x = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, dy*8)));
-        obj.rotation.y = THREE.MathUtils.degToRad(Math.max(-max, Math.min(max, -dx*8)));
+    function setCover(){
+      const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
+      const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
+      let rx=1,ry=1,ox=0,oy=0;
+      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+      tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+      vPlane.__base = {ox,oy,rx,ry,tex};
+    }
+    vPlane.addEventListener('materialtextureloaded', setCover);
+    v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCover(); }, {once:true});
+
+    // Canvas overlay (títulos + barra/wave)
+    const Cw = 2048, Ch = Math.round(Cw*H);
+    const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
+    const ctx = canvas.getContext('2d');
+    overlayP=document.createElement('a-plane');
+    overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
+    overlayP.setAttribute('position','0 0 0.02');
+    overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+    root.appendChild(overlayP);
+    overlayP.addEventListener('loaded', ()=>{
+      const tex = new AFRAME.THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      const mesh = overlayP.getObject3D('mesh');
+      mesh.material.map = tex; mesh.material.needsUpdate = true;
+      overlayP.__tex = tex;
+    });
+
+    const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
+    const titlePx = fitFontFor(CFG.title||'',  titleSlot.w*Cw/PW,   titleSlot.h*Ch/PH, 800);
+    const artistPx= fitFontFor(CFG.artist||'', artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+
+    function fitFontFor(text, wpx, hpx, weight){
+      let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.74);
+      while(lo<=hi){ const mid=(lo+hi>>1); ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1; }
+      return best;
+    }
+    function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
+    const waveTopHeight = Math.round(34*Cw/2048), waveGap = Math.round(22*Cw/2048);
+
+    (function draw(){
+      ctx.clearRect(0,0,Cw,Ch);
+
+      // Título
+      const tx = Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
+            tw = Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
+      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
+      ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+
+      // Artista
+      const ax = Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
+            aw = Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
+      ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
+      ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
+      ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+
+      // Barra
+      const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
+            pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
+      ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
+      ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+
+      let p=0, cur='0:00', dur='0:00';
+      if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
+      const fw=Math.max(2, Math.floor(pbw*p));
+      const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
+      grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
+      grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+      ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
+
+      // Knob + tiempos
+      const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
+      const pulse=1+0.10*Math.sin(performance.now()/220);
+      ctx.beginPath(); ctx.arc(kx,ky,r*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+
+      ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+      ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
+      ctx.fillText(cur, pbx, pby - 10);
+      ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
+
+      // Waveform doble
+      let arr = null;
+      if(analyser){ arr = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(arr); }
+      const nBars = CFG.waveBars || 48;
+      const step=pbw/nBars, byTop = pby - waveGap, byBot = pby + pbh + waveGap;
+      ctx.save();
+      for(let pass=0; pass<2; pass++){
+        const baseY = (pass===0? byTop : byBot);
+        const mirror = (pass===1);
+        for(let i=0;i<nBars;i++){
+          let v = 0.25 + 0.75*Math.abs(Math.sin((performance.now()/260)+(i*0.37)));
+          if(arr){ v = (arr[2+i]||0)/255; }
+          const h = Math.max(4, Math.round(v*waveTopHeight));
+          const x = Math.round(pbx + i*step + step*0.18);
+          const w = Math.max(2, Math.round(step*0.64));
+          ctx.fillStyle = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+          mirror ? ctx.fillRect(x, baseY, w, h) : ctx.fillRect(x, baseY-h, w, h);
+        }
       }
-      requestAnimationFrame(parallaxTick);
+      ctx.restore();
+
+      overlayP.__tex && (overlayP.__tex.needsUpdate = true);
+      requestAnimationFrame(draw);
+    })();
+
+    // Ken Burns suave
+    (function kenBurns(){
+      const B=vPlane.__base; if(!B) return requestAnimationFrame(kenBurns);
+      const dx=(Math.sin(performance.now()/6000)*0.015)*B.rx, dy=(Math.cos(performance.now()/9000)*0.015)*B.ry;
+      const ox=Math.max(0, Math.min(1-B.rx, B.ox + dx));
+      const oy=Math.max(0, Math.min(1-B.ry, B.oy + dy));
+      B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
+      requestAnimationFrame(kenBurns);
     })();
   }
 
   /* ====== ARRANQUE ROBUSTO ====== */
-  let startTimeoutId = null;
-
   async function probeCamera(){
-    // Pre-chequeo para obtener el prompt de permisos y ver errores claros
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      throw new Error('getUserMedia no disponible (abre en Safari/Chrome fuera de apps embebidas y con HTTPS).');
+      throw new Error('getUserMedia no disponible (usa HTTPS y navegador nativo).');
     }
     const cons = {video:{facingMode:{ideal:'environment'}}, audio:false};
     const stream = await navigator.mediaDevices.getUserMedia(cons);
-    // cerramos inmediatamente (MindAR abrirá su propio stream)
     stream.getTracks().forEach(t=>t.stop());
   }
-
   async function startMindAR(){
     return new Promise(async (resolve, reject)=>{
       try{
         const sys = scene.systems['mindar-image-system'];
         const comp= scene.components['mindar-image'];
         const doStart = async()=>{ if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start(); resolve(); };
-        if(scene.hasLoaded) doStart();
-        else scene.addEventListener('loaded', doStart, {once:true});
+        if(scene.hasLoaded) doStart(); else scene.addEventListener('loaded', doStart, {once:true});
       }catch(e){ reject(e); }
     });
   }
-
   async function fullStart(){
     try{
       btnStart.disabled = true; btnStart.textContent='Abriendo cámara…';
@@ -345,51 +332,43 @@
       await startMindAR();
       say('Cámara iniciada. Apunta al póster.');
       btnStart.textContent='Cámara lista';
-      // watchdog: si en 6s no llega arReady, permite reintentar
-      clearTimeout(startTimeoutId);
-      startTimeoutId = setTimeout(()=>{
-        if(dbg.textContent.includes('Cámara iniciada')){
-          btnStart.disabled=false;
-          btnStart.textContent='Reintentar';
-          say('No llegó arReady: pulsa “Reintentar” o abre en navegador nativo (no embebido).');
-        }
-      }, 6000);
     }catch(err){
       console.warn(err);
       btnStart.disabled=false; btnStart.textContent='Reintentar';
       say('❗ No se pudo abrir cámara: '+(err && err.message ? err.message : err));
     }
   }
-
   btnStart.onclick = fullStart;
-
-  // iOS / primer tap de cortesía
   window.addEventListener('pointerup', ()=>btnStart.click(), {once:true, passive:true});
 
-  /* ====== TARGET events: aquí controlamos el audio ====== */
-  anchor.addEventListener('targetFound', async ()=>{
-    root.emit('pop',null,false);
-    document.getElementById('btnAudio').disabled=false;
-    v1.play().catch(()=>{});
-    if(CFG.autoplayOnFound){
-      setupAudio();
-      try{
-        if(acx && acx.state==='suspended') await acx.resume();
-        await audio.play();
-        btnAudio.textContent='⏸ Audio';
-      }catch(e){ btnAudio.textContent='▶️ Audio'; }
-    }
-    say('Target FOUND');
+  /* ====== EVENTOS DE TODOS LOS ANCHORS ====== */
+  anchors.forEach((a,i)=>{
+    a.addEventListener('targetFound', async ()=>{
+      say('Target FOUND idx '+i);
+      if(!built) buildContent(a);
+      // asegúrate de que el root está colgado del anchor activo
+      if(activeAnchor!==a && root){
+        try{ a.appendChild(root); activeAnchor=a; }catch(e){}
+      }
+      // vídeo
+      v1.play().catch(()=>{});
+      // audio sólo al detectar
+      if(CFG.autoplayOnFound){
+        setupAudio();
+        try{ if(acx && acx.state==='suspended') await acx.resume(); await audio.play(); btnAudio.textContent='⏸ Audio'; }catch(e){ btnAudio.textContent='▶️ Audio'; }
+      }
+      btnAudio.disabled=false;
+      root && root.emit('pop',null,false);
+    });
+    a.addEventListener('targetLost', ()=>{
+      say('Target LOST idx '+i);
+      if(v1) v1.pause();
+      if(audio){ audio.pause(); btnAudio.textContent='▶️ Audio'; }
+      btnAudio.disabled=true;
+    });
   });
 
-  anchor.addEventListener('targetLost', ()=>{
-    v1.pause();
-    if(audio){ audio.pause(); btnAudio.textContent='▶️ Audio'; }
-    document.getElementById('btnAudio').disabled=true;
-    say('Target LOST…');
-  });
-
-  // Botón ⏯ (solo si hay target)
+  // ⏯ Audio manual (sólo útil cuando hay target)
   btnAudio.onclick = async ()=>{
     if(!audio) setupAudio();
     try{
@@ -406,21 +385,28 @@
   document.getElementById('cal').style.display = (qs.get('cal')==='1' ? 'block' : 'none');
   document.querySelectorAll('#cal [data-a]').forEach(b=>{
     b.onclick=()=>{
+      if(!root) return;
       const s=6, sc=0.005, rt=0.2, a=b.dataset.a;
-      if(a==='dx-') cal.dx-=s; if(a==='dx+') cal.dx+=s;
-      if(a==='dy-') cal.dy-=s; if(a==='dy+') cal.dy+=s;
-      if(a==='sc-') cal.scale=Math.max(0.9, cal.scale-sc);
-      if(a==='sc+') cal.scale=Math.min(1.3, cal.scale+sc);
-      if(a==='rt-') cal.rot-=rt; if(a==='rt+') cal.rot+=rt;
-      applyCal();
+      const pos = root.getAttribute('position'); const scale = root.getAttribute('scale'); const rot = root.getAttribute('rotation');
+      if(a==='dx-') root.setAttribute('position', `${pos.x- s/PW} ${pos.y} 0`);
+      if(a==='dx+') root.setAttribute('position', `${pos.x+ s/PW} ${pos.y} 0`);
+      if(a==='dy-') root.setAttribute('position', `${pos.x} ${pos.y+ s/PW} 0`);
+      if(a==='dy+') root.setAttribute('position', `${pos.x} ${pos.y- s/PW} 0`);
+      if(a==='sc-') root.setAttribute('scale', `${Math.max(0.9, scale.x-sc)} ${Math.max(0.9, scale.y-sc)} 1`);
+      if(a==='sc+') root.setAttribute('scale', `${Math.min(1.3, scale.x+sc)} ${Math.min(1.3, scale.y+sc)} 1`);
+      if(a==='rt-') root.setAttribute('rotation', `0 0 ${(+rot.z-rt).toFixed(2)}`);
+      if(a==='rt+') root.setAttribute('rotation', `0 0 ${(+rot.z+rt).toFixed(2)}`);
+      const ro = document.getElementById('readout');
+      if(ro) ro.textContent = `pos:${root.getAttribute('position').x.toFixed(3)},${root.getAttribute('position').y.toFixed(3)} scale:${root.getAttribute('scale').x.toFixed(3)} rot:${root.getAttribute('rotation').z}`;
     };
   });
   document.getElementById('copyUrl').onclick=async()=>{
+    if(!root) return;
+    const pos=root.getAttribute('position'), sc=root.getAttribute('scale'), rt=root.getAttribute('rotation');
+    const dx=Math.round(pos.x*PW), dy=Math.round(-pos.y*PW), scale=+sc.x.toFixed(3), rot=+rt.z;
     const url=new URL(location.href);
-    url.searchParams.set('dx', Math.round(cal.dx||0));
-    url.searchParams.set('dy', Math.round(cal.dy||0));
-    url.searchParams.set('scale', +(cal.scale||1).toFixed(3));
-    url.searchParams.set('rot', +(cal.rot||0).toFixed(1));
+    url.searchParams.set('dx', dx); url.searchParams.set('dy', dy);
+    url.searchParams.set('scale', scale); url.searchParams.set('rot', rot.toFixed(1));
     try{ await navigator.clipboard.writeText(url.toString()); alert('URL copiada'); }catch{ prompt('Copia la URL', url.toString()); }
   };
 
