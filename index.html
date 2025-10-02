@@ -37,7 +37,11 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- Doy un src por defecto para evitar el warning de a-assets.
+         El JSON podrá sobreescribirlo en runtime sin problema. -->
+    <video id="v1"
+      src="https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4"
+      playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
@@ -68,8 +72,11 @@
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
-  try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
-  catch(e){ log('❗ No pude cargar el JSON'); return; }
+  try{
+    CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json();
+  }catch(e){
+    log('❗ No pude cargar el JSON'); return;
+  }
 
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
@@ -150,8 +157,7 @@
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  if (CFG.video) v1.src = CFG.video; // evita about:blank si faltara en el JSON
-  v1.load();
+  if (CFG.video && CFG.video !== v1.currentSrc) { v1.src = CFG.video; v1.load(); }
 
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn);
@@ -384,9 +390,9 @@
   scene.addEventListener('mouseup', onUp);
   scene.addEventListener('mouseleave', onUp);
   // soporte táctil
-  scene.addEventListener('touchstart', onDown);
-  scene.addEventListener('touchend', onUp);
-  scene.addEventListener('touchcancel', onUp);
+  scene.addEventListener('touchstart', onDown, {passive:true});
+  scene.addEventListener('touchend', onUp, {passive:true});
+  scene.addEventListener('touchcancel', onUp, {passive:true});
 
   function heartsTick(){
     const dt = 1/60, g=-0.8, damp=0.55;
@@ -427,7 +433,7 @@
   }
   requestAnimationFrame(heartsTick);
 
-  /* ---------- Botón cámara: robusto ---------- */
+  /* ---------- Botón cámara: robusto y SIN paréntesis sueltos ---------- */
   async function ensureSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(res=>scene.addEventListener('loaded', res, {once:true})); }
   async function ensureMindARReady(){
     if(scene.components['mindar-image']) return;
@@ -445,9 +451,10 @@
   }
 
   const btnStart=document.getElementById('btnStart');
-  btnStart.onclick=async()=>{
+  btnStart.addEventListener('click', async()=>{
     try{
-      btnStart.disabled=true; log('Pidiendo cámara…');
+      btnStart.disabled=true;
+      log('Pidiendo cámara…');
       // permiso explícito en el mismo gesto (mejora iOS/Android)
       const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
@@ -455,11 +462,12 @@
       await ensureMindARReady();
       await startMindAR();
       btnStart.textContent='Cámara lista';
+      log('Cámara iniciada');
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
     }
-  };
+  });
 
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
