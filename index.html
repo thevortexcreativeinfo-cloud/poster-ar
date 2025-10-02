@@ -36,7 +36,8 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d,.heart; far: 3"></a-entity>
+    <!-- el raycaster permite clicks en corazones -->
+    <a-entity id="cursor" cursor="rayOrigin: mouse" raycaster="objects: .heart; far: 3"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -55,6 +56,7 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ alert('Falta ?cfg=URL_DEL_JSON'); return; }
@@ -83,21 +85,21 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* Póster: papel + sombra suave */
+  /* Póster: papel + leve sombra */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 5, false, false);
 
-  const drop=document.createElement('a-plane'); // sombra suave
+  const drop=document.createElement('a-plane');
   drop.setAttribute('width',1.08); drop.setAttribute('height',H*1.08);
   drop.setAttribute('position','0 -0.01 -0.03');
   drop.setAttribute('rotation','-4 0 0');
   drop.setAttribute('material','shader:flat; color:#000; opacity:.18; transparent:true; side:double; depthTest:false; depthWrite:false');
   root.appendChild(drop); setRO(drop, 1, false, false);
 
-  /* Marco + VÍDEO con VideoTexture */
+  /* Marco + VÍDEO (VideoTexture para evitar negro) */
   const v1=document.getElementById('v1');
   v1.muted=true; v1.playsInline=true; v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
   v1.crossOrigin='anonymous'; v1.src = CFG.video||''; v1.load();
@@ -122,7 +124,7 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false');
   root.appendChild(vPlane); setRO(vPlane, 90, true, true);
 
-  // “neón” alrededor del vídeo
+  // “neón” sutil alrededor del vídeo
   const glowCol1 = CFG.colors?.wave1 || '#13d77a';
   const glowCol2 = CFG.colors?.wave2 || '#ffd54a';
   (function neon(){
@@ -144,7 +146,7 @@
     });
   })();
 
-  // Asignar VideoTexture (evita vídeo negro)
+  // VideoTexture + cover
   function setVideoTexture(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!v1.videoWidth) return;
     const tex = new AFRAME.THREE.VideoTexture(v1);
@@ -164,8 +166,9 @@
   vPlane.addEventListener('loaded', setVideoTexture);
   v1.addEventListener('loadeddata', setVideoTexture);
   v1.addEventListener('playing', setVideoTexture);
+  v1.addEventListener('error', e=>log('⚠️ Error de vídeo (revisa URL/CORS)'));
 
-  /* Canvas overlay: textos + barra + waveform + flourish inferior */
+  /* Canvas overlay: textos + barra + waveform */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -197,14 +200,14 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* Dibujo */
+  /* Dibujo barra + waveform */
   const bars=48, waveH=Math.round(34*Cw/2048), gap=Math.round(22*Cw/2048);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título y artista
+    // Título / artista
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH), tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
@@ -227,15 +230,10 @@
     const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0); grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a')); grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx,pby,fw,pbh);
 
-    // knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left'; ctx.font=`700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`; ctx.fillText(cur, pbx, pby-10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby-10);
-
-    // partícula del progreso
-    ctx.beginPath(); ctx.arc(kx, ky + pbh*1.8, Math.max(3, Math.round(pbh*0.9/2)), 0, Math.PI*2);
-    ctx.fillStyle=(CFG.colors?.wave1||'#13d77a'); ctx.globalAlpha=.85; ctx.fill(); ctx.globalAlpha=1;
 
     // waveform doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null); if(arr) analyser.getByteFrequencyData(arr);
@@ -251,7 +249,6 @@
       }
     }
     level /= (arr? bars : 1);
-    // “beat” -> generar corazón
     const now = performance.now();
     if(analyser && level>0.55 && (now-lastBeat)>260){ lastBeat=now; spawnHeart(); }
 
@@ -271,10 +268,9 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* Corazones “con física” ligera y toque para impulsarlos */
+  /* Corazones con física simulada + drag */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
-  // zona de juego: banda inferior del póster
   const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
 
   function spawnHeart(){
@@ -285,21 +281,32 @@
     h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
     h.setAttribute('position', `${x} ${y} 0.06`);
     h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
-    h.classList.add('ui3d','heart');
+    h.classList.add('heart');
     root.appendChild(h); setRO(h, 140, false, false);
     const obj={el:h, x, y, vx:(Math.random()-0.5)*0.12, vy:0.35+Math.random()*0.20};
     hearts.push(obj);
-    h.addEventListener('click', ()=>{ obj.vx += (Math.random()-0.5)*0.6; obj.vy += 0.6; if(navigator.vibrate) navigator.vibrate(15); });
-    // autodestruir cuando hay demasiados
-    if(hearts.length>20){ const old=hearts.shift(); old.el.remove(); }
+
+    // agarrar y arrastrar
+    h.addEventListener('mousedown', (ev)=>{
+      const pW = ev.detail?.intersection?.point;
+      let pL = pW ? root.object3D.worldToLocal(pW.clone()) : new AFRAME.THREE.Vector3(obj.x,obj.y,0);
+      grabbed = obj;
+      obj.vx = obj.vy = 0;
+      grabOffset.set(obj.x - pL.x, obj.y - pL.y, 0);
+      lastMoveTime = performance.now();
+      lastPos.set(obj.x, obj.y, 0);
+    });
   }
 
+  // simulación
   (function heartsTick(){
     const g=-0.9, damp=0.55, dt=1/60;
     hearts.forEach(o=>{
-      o.vy += g*dt;
-      o.x += o.vx*dt;
-      o.y += o.vy*dt;
+      if(o!==grabbed){ // libre
+        o.vy += g*dt;
+        o.x += o.vx*dt;
+        o.y += o.vy*dt;
+      }
       if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
       if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
       if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
@@ -309,6 +316,37 @@
     });
     requestAnimationFrame(heartsTick);
   })();
+
+  // drag con raycast manual al plano del vídeo
+  let grabbed=null, grabOffset=new AFRAME.THREE.Vector3(), lastPos=new AFRAME.THREE.Vector3(), lastMoveTime=0;
+  function posterPointFromEvent(evt){
+    if(!scene?.camera) return null;
+    const rect = scene.canvas.getBoundingClientRect();
+    const ndc = {
+      x: (evt.clientX - rect.left) / rect.width  * 2 - 1,
+      y: -((evt.clientY - rect.top) / rect.height) * 2 + 1
+    };
+    const rc = new AFRAME.THREE.Raycaster();
+    rc.setFromCamera(ndc, scene.camera);
+    const mesh = vPlane.getObject3D('mesh'); if(!mesh) return null;
+    const hit = rc.intersectObject(mesh, true)[0];
+    if(!hit) return null;
+    return root.object3D.worldToLocal(hit.point.clone());
+  }
+  window.addEventListener('pointermove', (ev)=>{
+    if(!grabbed) return;
+    const p = posterPointFromEvent(ev); if(!p) return;
+    const now = performance.now(), dt = Math.max(0.016, (now - lastMoveTime)/1000);
+    lastMoveTime = now;
+    const nx = clamp(p.x + grabOffset.x, area.x1, area.x2);
+    const ny = clamp(p.y + grabOffset.y, area.y1, area.y2);
+    grabbed.vx = (nx - lastPos.x) / dt * 0.25; // inercia al soltar
+    grabbed.vy = (ny - lastPos.y) / dt * 0.25;
+    grabbed.x = nx; grabbed.y = ny;
+    grabbed.el.setAttribute('position', `${nx} ${ny} 0.06`);
+    lastPos.set(nx, ny, 0);
+  }, {passive:true});
+  window.addEventListener('pointerup', ()=>{ grabbed=null; }, {passive:true});
 
   /* Estados / UI */
   const btnStart=document.getElementById('btnStart');
@@ -323,7 +361,7 @@
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar cámara: ${e.name||''} ${e.message||e}`);
-      alert('No se pudo abrir la cámara.\nAsegúrate de:\n• Permitir permisos de cámara\n• Abrir por HTTPS (GitHub Pages ya lo es)\n• Cerrar otras apps que usen cámara\n• En Brave u otros, desactiva el bloqueo para esta página');
+      alert('No se pudo abrir la cámara.\n• Permite permisos\n• Usa HTTPS\n• Cierra otras apps de cámara\n• En navegadores con bloqueos (Brave), permite cámara para esta página');
     }
   };
 
@@ -333,15 +371,15 @@
     log('Target FOUND');
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
-    // corazón de bienvenida
-    spawnHeart(); spawnHeart();
+    // corazones iniciales
+    for(let i=0;i<3;i++) spawnHeart();
   });
   anchor.addEventListener('targetLost', ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // auto con primer gesto (iOS)
-  window.addEventListener('pointerup', ()=>btnStart.click(), {once:true,passive:true});
+  // forzar play de vídeo en el primer gesto (por si algún móvil lo exige)
+  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
