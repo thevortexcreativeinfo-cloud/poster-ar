@@ -53,6 +53,7 @@
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
 
   /* ---------- Helpers ---------- */
   function setRO(el, order, depthTest, depthWrite){
@@ -104,14 +105,12 @@
   const glow1 = CFG.colors?.wave1 || '#13d77a';
   const glow2 = CFG.colors?.wave2 || '#ffd54a';
 
-  // marco fino detrás del vídeo
   const frame=document.createElement('a-plane');
   frame.setAttribute('width',u.wn*1.012); frame.setAttribute('height',u.hn*1.012);
   frame.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
   frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frame); setRO(frame, 5, false, false);
 
-  // tiras luminosas (glow respirando)
   (function stripsGlow(){
     const t=0.004, z=0.018;
     const strips=[
@@ -131,7 +130,6 @@
     });
   })();
 
-  // runners que recorren el marco
   (function runners(){
     const z=0.019, w=0.02, h=0.006, dur=1800;
     function runner(x1,y1,x2,y2,color){
@@ -142,7 +140,6 @@
       r.setAttribute('animation__go',`property:position; to:${x2} ${y2} ${z}; dur:${dur}; dir:alternate; loop:true; easing:easeInOutSine`);
       root.appendChild(r); setRO(r, 25, false, false);
     }
-    // arriba L→R, abajo R→L, izquierda abajo→arriba, derecha arriba→abajo
     runner(u.cx-u.wn/2, u.cy+u.hn/2+0.01, u.cx+u.wn/2, u.cy+u.hn/2+0.01, glow1);
     runner(u.cx+u.wn/2, u.cy-u.hn/2-0.01, u.cx-u.wn/2, u.cy-u.hn/2-0.01, glow2);
     runner(u.cx-u.wn/2-0.01, u.cy-u.hn/2, u.cx-u.wn/2-0.01, u.cy+u.hn/2, glow2);
@@ -153,7 +150,7 @@
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';
+  if (CFG.video) v1.src = CFG.video; // evita about:blank si faltara en el JSON
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -173,20 +170,23 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // Fallback automático si hiciera falta
-  let forcedVideoTex=false;
+  // Fallback si alguna plataforma deja negro
   function forceThreeVideoTexture(){
-    if(forcedVideoTex) return;
     const mesh=vPlane.getObject3D('mesh'); if(!mesh) return;
-    const tex=new AFRAME.THREE.VideoTexture(v1);
-    tex.needsUpdate=true;
-    mesh.material.map=tex; mesh.material.needsUpdate=true;
-    coverFromMap(tex);
-    forcedVideoTex=true; log('Fallback a THREE.VideoTexture');
+    if(!mesh.material.map && v1.readyState>=2){
+      const tex=new AFRAME.THREE.VideoTexture(v1);
+      tex.needsUpdate=true;
+      mesh.material.map=tex; mesh.material.needsUpdate=true;
+      coverFromMap(tex);
+      log('Fallback a THREE.VideoTexture');
+    }
   }
-  function checkBlackFallback(){ const mesh=vPlane.getObject3D('mesh'); const map=mesh?.material?.map; if(!v1.videoWidth || !map) forceThreeVideoTexture(); }
+  function checkBlackFallback(){
+    const map=vPlane.getObject3D('mesh')?.material?.map;
+    if(!v1.videoWidth || !map) forceThreeVideoTexture();
+  }
 
-  /* ---------- Canvas overlay: textos + barra musical + cinta inferior ---------- */
+  /* ---------- Canvas overlay: textos + barra musical ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -206,7 +206,6 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ---------- Audio + analyser ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
@@ -226,7 +225,6 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Barra musical suave + picos + cinta inferior ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -334,10 +332,8 @@
   /* ---------- Corazones con “física” + drag ---------- */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
-  // área de juego: banda inferior del póster
   const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
 
-  // plano invisible para calcular intersecciones de drag
   const dragPlane=document.createElement('a-plane');
   dragPlane.classList.add('dragplane');
   dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
@@ -357,33 +353,40 @@
     if(hearts.length>24){ const old=hearts.shift(); old.el.remove(); }
   }
 
-  const ray = document.getElementById('mouseRay').components.raycaster;
   let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
 
   function pointerLocal(){
-    const ints = ray.intersections || [];
+    const ray = getRay(); const ints = ray?.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('dragplane'));
     if(!hit) return null;
     const p = hit.point.clone();
     root.object3D.worldToLocal(p); // coord locales del póster
     return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
   }
-
   function heartFromEl(el){ return hearts.find(h=>h.el===el)||null; }
 
-  scene.addEventListener('mousedown', ()=>{
-    // ¿estamos mirando a un corazón?
-    const ints = ray.intersections || [];
-    const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('heart'));
-    if(!hit) return;
-    const h = heartFromEl(hit.object.el); if(!h) return;
-    const p = pointerLocal(); if(!p) return;
-    dragging = h;
-    dragOffset = {x: h.x - p.x, y: h.y - p.y};
-    lastPointer = p; lastTime = performance.now();
-  });
-  scene.addEventListener('mouseup', ()=>{ dragging=null; });
-  scene.addEventListener('mouseleave', ()=>{ dragging=null; });
+  function onDown(){
+    const ray = getRay(); const ints = ray?.intersections || [];
+    const heartHit = ints.find(i => i.object?.el?.classList?.contains('heart'));
+    const p = pointerLocal();
+
+    if(heartHit && p){
+      const h = heartFromEl(heartHit.object.el); if(!h) return;
+      dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y}; lastPointer = p; lastTime = performance.now();
+      return;
+    }
+    // si tocas la banda inferior, crea un corazón
+    if(p && p.y<=area.y2 && p.y>=area.y1){ spawnHeart(p.x, p.y); }
+  }
+  function onUp(){ dragging=null; }
+
+  scene.addEventListener('mousedown', onDown);
+  scene.addEventListener('mouseup', onUp);
+  scene.addEventListener('mouseleave', onUp);
+  // soporte táctil
+  scene.addEventListener('touchstart', onDown);
+  scene.addEventListener('touchend', onUp);
+  scene.addEventListener('touchcancel', onUp);
 
   function heartsTick(){
     const dt = 1/60, g=-0.8, damp=0.55;
@@ -394,7 +397,6 @@
     if(dragging && p){
       const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
       const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-      // velocidad basada en desplazamiento del puntero
       if(lastPointer){
         const dtms = Math.max(16, now-lastTime);
         dragging.vx = (nx - dragging.x) / (dtms/1000);
@@ -425,15 +427,33 @@
   }
   requestAnimationFrame(heartsTick);
 
-  /* ---------- Estados / UI ---------- */
+  /* ---------- Botón cámara: robusto ---------- */
+  async function ensureSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(res=>scene.addEventListener('loaded', res, {once:true})); }
+  async function ensureMindARReady(){
+    if(scene.components['mindar-image']) return;
+    await new Promise(res=>{
+      const onInit=(e)=>{ if(e.detail?.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } };
+      scene.addEventListener('componentinitialized', onInit);
+    });
+  }
+  async function startMindAR(){
+    const comp=scene.components['mindar-image'];
+    const sys =scene.systems['mindar-image-system'];
+    if(comp?.start){ await comp.start(); return; }
+    if(sys?.start){ await sys.start(); return; }
+    throw new Error('No MindAR start method');
+  }
+
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
       btnStart.disabled=true; log('Pidiendo cámara…');
+      // permiso explícito en el mismo gesto (mejora iOS/Android)
       const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      await ensureSceneLoaded();
+      await ensureMindARReady();
+      await startMindAR();
       btnStart.textContent='Cámara lista';
     }catch(e){
       btnStart.disabled=false;
@@ -451,9 +471,7 @@
     log('Target FOUND');
   });
 
-  anchor.addEventListener('targetLost', ()=>{
-    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
-  });
+  anchor.addEventListener('targetLost', ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…'); });
 
   // primer gesto (iOS ayuda a media)
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
