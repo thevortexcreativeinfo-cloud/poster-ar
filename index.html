@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Cinemático+</title>
+<title>Poster AR · Cinemático++</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
@@ -57,8 +57,6 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false"></a-camera>
-
-  <!-- Anchor del target -->
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
@@ -87,11 +85,11 @@
   // Textos y elementos (en px del póster)
   const TITLE = {x:200, y:2150, w:2080, h:190};
   const ARTIST= {x:200, y:2330, w:2080, h:150};
-  const PB    = {x:300, y:2640, w:2060, h:18};
+  const PB    = {x:300, y:2640, w:2060, h:20};          // barra un pelín más alta
   const TIME_L= {x:300, y:2680, w:160, h:40};
   const TIME_R= {x:2060, y:2680, w:300, h:40};
 
-  // Calibración (ajústala y copia la URL)
+  // Calibración
   const CAL = {
     dx: +(qs.get('dx')||-30),
     dy: +(qs.get('dy')||252),
@@ -101,19 +99,18 @@
 
   const PARALLAX = qs.get('parallax')==='1';
 
-  // ===== Preparación A-Frame / MindAR =====
+  // ===== A-Frame / MindAR =====
   const scene=document.getElementById('scene');
   scene.setAttribute('mindar-image', `imageTargetSrc:${TARGET_URL}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
   scene.addEventListener('loaded', ()=>{ try{ scene.renderer.setClearColor(0x000000,0);}catch{} });
 
-  // Cámara cover detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){ Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'}); }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
   const anchor=document.getElementById('anchor');
   const root=document.createElement('a-entity'); anchor.appendChild(root);
-  root.setAttribute('animation__pop','property:scale; from:0.97 0.97 1; to:1 1 1; dur:320; easing:easeOutQuad; startEvents:pop');
+  root.setAttribute('animation__pop','property:scale; from:0.95 0.95 1; to:1 1 1; dur:380; easing:easeOutQuad; startEvents:pop');
 
   function applyCal(){
     root.setAttribute('position', `${CAL.dx/PW} ${-CAL.dy/PW} 0`);
@@ -125,15 +122,23 @@
 
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
-  // ===== Vignette (suave, detrás) =====
+  // ===== Fondo/Vignette + sombra elíptica =====
   const vignette=document.createElement('a-plane');
-  vignette.setAttribute('width', 1.12);
-  vignette.setAttribute('height', H*1.12);
-  vignette.setAttribute('position','0 0 -0.02');
-  vignette.setAttribute('material','shader:flat; color:#000; opacity:.20; transparent:true; side:double; depthTest:false');
+  vignette.setAttribute('width', 1.16);
+  vignette.setAttribute('height', H*1.16);
+  vignette.setAttribute('position','0 0 -0.03');
+  vignette.setAttribute('material','shader:flat; color:#000; opacity:.22; transparent:true; side:double; depthTest:false');
   root.appendChild(vignette);
 
-  // ===== CANVAS OVERLAY (todo el diseño y animaciones 2D) =====
+  const shadow=document.createElement('a-plane');
+  shadow.setAttribute('width', 0.86);
+  shadow.setAttribute('height', H*0.05);
+  shadow.setAttribute('position', `0 ${-H*0.48} -0.029`);
+  shadow.setAttribute('rotation','-8 0 0');
+  shadow.setAttribute('material','shader:flat; color:#000; opacity:.18; transparent:true; side:double; depthTest:false');
+  root.appendChild(shadow);
+
+  // ===== Canvas overlay (diseño, textos y FX 2D) =====
   const baseImg = document.getElementById('base');
   const Cw = 2048, Ch = Math.round(Cw*H);
   const canvas = document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
@@ -142,7 +147,8 @@
   const overlayP = document.createElement('a-plane');
   overlayP.setAttribute('width',1); overlayP.setAttribute('height',H);
   overlayP.setAttribute('position','0 0 0.0');
-  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:1');
+  overlayP.setAttribute('material','shader:flat; transparent:true; side:double; depthTest:false; opacity:0');
+  overlayP.setAttribute('animation__fade','property:material.opacity; from:0; to:1; dur:380; easing:easeOutQuad; startEvents:show');
   root.appendChild(overlayP);
 
   overlayP.addEventListener('loaded', ()=>{
@@ -153,7 +159,7 @@
     overlayP.__tex = tex;
   });
 
-  // ===== Vídeo limpio (cover) =====
+  // ===== Vídeo limpio + micro Ken-Burns (sobre cover base) =====
   const v1=document.getElementById('v1');
   const u = px2(SLOT.x,SLOT.y,SLOT.w,SLOT.h);
   const vPlane=document.createElement('a-plane');
@@ -162,32 +168,51 @@
   vPlane.setAttribute('material','shader:flat; src:#v1; side:double; depthTest:false; opacity:1');
   root.appendChild(vPlane);
 
-  function videoCover(){
+  function setCoverAndBase(){
     const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map||!v1.videoWidth) return;
     const tex=mesh.material.map, vr=v1.videoWidth/v1.videoHeight, rr=SLOT.w/SLOT.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
     tex.offset.set(ox,oy); tex.repeat.set(rx,ry); tex.needsUpdate=true; mesh.material.needsUpdate=true;
+    vPlane.__base = {ox,oy,rx,ry,tex};
   }
-  vPlane.addEventListener('materialtextureloaded', videoCover);
-  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); videoCover(); }, {once:true});
+  vPlane.addEventListener('materialtextureloaded', setCoverAndBase);
+  v1.addEventListener('loadedmetadata', ()=>{ v1.play().catch(()=>{}); setCoverAndBase(); }, {once:true});
 
-  // ===== Audio / EQ =====
+  // ===== Audio + WebAudio analyser =====
   let audio=null, userOK=false, acx=null, analyser=null, dataArr=null;
+  let lastBeat=0;
 
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
-  // ===== Dibujo del overlay (animado) =====
-  let t0=performance.now(), sweepT=0;
-  const bars=32; // waveform
+  // ===== Partículas (corazones/estrellas) =====
+  function burstParticles(color='#13d77a', count=10){
+    for(let i=0;i<count;i++){
+      const p=document.createElement('a-circle');
+      p.setAttribute('radius', 0.006 + Math.random()*0.01);
+      p.setAttribute('material',`shader:flat; color:${color}; transparent:true; opacity:0.95; side:double; depthTest:false`);
+      p.setAttribute('position', `${(Math.random()-0.5)*0.3} ${-H*0.20 + Math.random()*0.08} 0.13`);
+      const dy = 0.18 + Math.random()*0.22;
+      const dx = (Math.random()-0.5)*0.25;
+      const dur = 900 + Math.random()*600;
+      p.setAttribute('animation__move', `property:position; to:${dx} ${-H*0.20+dy} 0.13; dur:${dur}; easing:easeOutQuad`);
+      p.setAttribute('animation__fade', `property:material.opacity; from:0.95; to:0; dur:${dur}; easing:linear`);
+      p.setAttribute('animation__scale', `property:scale; from:0.8 0.8 1; to:1.4 1.4 1; dur:${dur}`);
+      root.appendChild(p);
+      setTimeout(()=>p.remove(), dur+80);
+    }
+  }
 
-  // Auto-fit de texto una vez (guardamos tamaño)
+  // ===== Dibujo del overlay (textos, barra, waveform, sweep) =====
+  let t0=performance.now(), sweepT=0;
+  const bars=32;
+
   function fitFontFor(text, wpx, hpx, weight){
-    let lo=12, hi=Math.floor(hpx*0.9), best=Math.floor(hpx*0.72);
+    let lo=12, hi=Math.floor(hpx*0.92), best=Math.floor(hpx*0.75);
     while(lo<=hi){
       const mid=(lo+hi>>1);
       ctx.font = `${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
-      if(ctx.measureText(text).width <= wpx*0.92){ best=mid; lo=mid+1; } else hi=mid-1;
+      if(ctx.measureText(text).width <= wpx*0.94){ best=mid; lo=mid+1; } else hi=mid-1;
     }
     return best;
   }
@@ -201,41 +226,45 @@
     if(baseImg.complete) ctx.drawImage(baseImg, 0, 0, Cw, Ch);
     else { ctx.fillStyle='#fff'; ctx.fillRect(0,0,Cw,Ch); }
 
-    // ---- título con shimmer ----
+    // título con shimmer
     const tx = Math.round(TITLE.x*Cw/PW), ty=Math.round(TITLE.y*Ch/PH),
           tw = Math.round(TITLE.w*Cw/PW), th=Math.round(TITLE.h*Ch/PH);
-    const grad = ctx.createLinearGradient(tx,ty, tx+tw,ty);
     const off = (now*0.06)%tw;
-    grad.addColorStop(Math.max(0,(off-120)/tw),'rgba(255,255,255,0)');
-    grad.addColorStop(Math.max(0,(off-60)/tw), 'rgba(255,255,255,.6)');
+    const grad = ctx.createLinearGradient(tx,ty, tx+tw,ty);
+    grad.addColorStop(Math.max(0,(off-140)/tw),'rgba(255,255,255,0)');
+    grad.addColorStop(Math.max(0,(off-70)/tw), 'rgba(255,255,255,.65)');
     grad.addColorStop(Math.min(1,(off)/tw),     'rgba(255,255,255,0)');
-    // base
+
     ctx.fillStyle=titleCol; ctx.textBaseline='middle'; ctx.textAlign='center';
-    ctx.shadowColor='rgba(0,0,0,0.25)'; ctx.shadowBlur=Math.floor(th*.06); ctx.shadowOffsetY=Math.floor(th*.03);
+    ctx.shadowColor='rgba(0,0,0,0.26)'; ctx.shadowBlur=Math.floor(th*.06); ctx.shadowOffsetY=Math.floor(th*.03);
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillText(titleTxt, tx+tw/2, ty+th/2);
-    // shimmer encima
-    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=grad;
-    ctx.fillRect(tx, ty, tw, th); ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=grad; ctx.fillRect(tx, ty, tw, th); ctx.restore();
 
-    // ---- artista ----
+    // artista
     const ax = Math.round(ARTIST.x*Cw/PW), ay=Math.round(ARTIST.y*Ch/PH),
           aw = Math.round(ARTIST.w*Cw/PW), ah=Math.round(ARTIST.h*Ch/PH);
     ctx.shadowColor='rgba(0,0,0,0.18)'; ctx.shadowBlur=Math.floor(ah*.05); ctx.shadowOffsetY=Math.floor(ah*.02);
     ctx.fillStyle=artistCol; ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillText(artistTxt, ax+aw/2, ay+ah/2);
 
-    // ---- barra y tiempos ----
+    // barra y tiempos
     const pbx=Math.round(PB.x*Cw/PW), pby=Math.round(PB.y*Ch/PH),
           pbw=Math.round(PB.w*Cw/PW), pbh=Math.max(2,Math.round(PB.h*Ch/PH));
+
+    // glow leve debajo
+    ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p = audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw = Math.max(2, Math.floor(pbw*p));
     ctx.fillStyle='#13d77a'; ctx.fillRect(pbx, pby, fw, pbh);
-    // knob con pulso ligero
-    const kx = pbx + fw; const ky = pby + pbh/2; const baseR = Math.max(3, Math.round(pbh*0.9/2));
-    const pulse = 1 + 0.08*Math.sin(now/220);
+
+    // knob con pulso
+    const kx = pbx + fw; const ky = pby + pbh/2;
+    const baseR = Math.max(3, Math.round(pbh*0.9/2));
+    const pulse = 1 + 0.10*Math.sin(now/220);
     ctx.beginPath(); ctx.arc(kx,ky,baseR*pulse,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
 
     // tiempos
@@ -246,16 +275,14 @@
     ctx.textAlign='right';
     ctx.fillText(dur, Math.round((TIME_R.x+TIME_R.w)*Cw/PW), Math.round((TIME_R.y+TIME_R.h)*Ch/PH));
 
-    // ---- waveform audio-reactivo sobre la barra ----
+    // waveform
     const bx=pbx, by=pby - Math.round(22*Cw/2048), bw=pbw, bh=Math.round(18*Cw/2048);
     ctx.save(); ctx.translate(bx,by+bh);
     const step=bw/bars;
+    let level=0;
     for(let i=0;i<bars;i++){
-      let v = 0.2 + 0.8*Math.abs(Math.sin((now/260)+(i*0.37))); // fallback
-      if(analyser){
-        analyser.getByteFrequencyData(dataArr);
-        v = (dataArr[2+i]||0)/255;
-      }
+      let v = 0.2 + 0.8*Math.abs(Math.sin((now/260)+(i*0.37)));
+      if(analyser){ analyser.getByteFrequencyData(dataArr); v = (dataArr[2+i]||0)/255; level += v; }
       const h = Math.max(2, Math.round(v*bh));
       const x = Math.round(i*step + step*0.2);
       ctx.fillStyle='#13d77a';
@@ -263,42 +290,59 @@
     }
     ctx.restore();
 
-    // ---- “light sweep” por el marco del póster ----
+    // beat → partículas
+    if(analyser){
+      level/=bars;
+      const nowMs=performance.now();
+      if(level>0.48 && nowMs-lastBeat>200){ lastBeat=nowMs; burstParticles('#13d77a', 6); }
+    }
+
+    // light-sweep del marco
     const pad = Math.round(14*Cw/2048);
     const lw = Math.round(3*Cw/2048);
     ctx.lineWidth = lw;
     ctx.strokeStyle='rgba(255,255,255,0.75)';
     const per = (sweepT%4)/4;
-    // trazo parcial alrededor (clockwise)
     const rx=pad, ry=pad, rw=Cw-pad*2, rh=Ch-pad*2;
-    ctx.save();
-    ctx.beginPath();
-    // convertimos per a segmento
+    ctx.save(); ctx.beginPath();
     const L = rw*2+rh*2, Lp=L*per;
     function drawPartial(len){
-      let d=len;
-      ctx.moveTo(rx,ry);
-      // top
+      let d=len; ctx.moveTo(rx,ry);
       if(d<=rw){ ctx.lineTo(rx+d, ry); return; } else { ctx.lineTo(rx+rw, ry); d-=rw; }
-      // right
       if(d<=rh){ ctx.lineTo(rx+rw, ry+d); return; } else { ctx.lineTo(rx+rw, ry+rh); d-=rh; }
-      // bottom
       if(d<=rw){ ctx.lineTo(rx+rw-d, ry+rh); return; } else { ctx.lineTo(rx, ry+rh); d-=rw; }
-      // left
       ctx.lineTo(rx, ry+rh-d);
     }
-    drawPartial(Lp);
-    ctx.stroke();
-    ctx.restore();
+    drawPartial(Lp); ctx.stroke(); ctx.restore();
+
+    // micro “glare” diagonal en la foto (muy sutil)
+    const vx=Math.round(SLOT.x*Cw/PW), vy=Math.round(SLOT.y*Ch/PH),
+          vw=Math.round(SLOT.w*Cw/PW), vh=Math.round(SLOT.h*Ch/PH);
+    const g=ctx.createLinearGradient(vx,vy, vx+vw, vy+vh);
+    const t = (performance.now()%3000)/3000;
+    g.addColorStop(Math.max(0,t-0.08),'rgba(255,255,255,0)');
+    g.addColorStop(Math.min(1,t),'rgba(255,255,255,0.08)');
+    g.addColorStop(Math.min(1,t+0.08),'rgba(255,255,255,0)');
+    ctx.fillStyle=g; ctx.fillRect(vx,vy,vw,vh);
 
     // actualizar textura
     if(overlayP.__tex){ overlayP.__tex.needsUpdate = true; }
   }
 
-  function loop(){ drawOverlay(); requestAnimationFrame(loop); }
+  // Ken-Burns suave: desplaza ligeramente dentro del recorte
+  function kenBurns(){
+    const B=vPlane.__base; if(!B) return;
+    const dx = (Math.sin(performance.now()/6000)*0.015)*B.rx;
+    const dy = (Math.cos(performance.now()/9000)*0.015)*B.ry;
+    const ox = Math.max(0, Math.min(1-B.rx, B.ox + dx));
+    const oy = Math.max(0, Math.min(1-B.ry, B.oy + dy));
+    B.tex.offset.set(ox, oy); B.tex.needsUpdate=true;
+  }
+
+  function loop(){ drawOverlay(); kenBurns(); requestAnimationFrame(loop); }
   requestAnimationFrame(loop);
 
-  // ===== Parallax suave =====
+  // ===== Parallax =====
   function parallaxTick(){
     if(!PARALLAX || !scene?.camera) return requestAnimationFrame(parallaxTick);
     const obj=root.object3D, cam3=scene.camera;
@@ -313,6 +357,7 @@
 
   // ===== Estados AR =====
   anchor.addEventListener('targetFound', ()=>{
+    overlayP.emit('show',null,false);
     root.emit('pop',null,false);
     v1.play().catch(()=>{});
     if(userOK){ audio?.play().catch(()=>{}); document.getElementById('btnSound').hidden=true; }
@@ -346,18 +391,20 @@
           dataArr = new Uint8Array(analyser.frequencyBinCount);
           const srcNode = acx.createMediaElementSource(audio);
           srcNode.connect(analyser); analyser.connect(acx.destination);
-        }catch(e){ /* fallback breathing ya cubre */ }
+        }catch(e){ /* fallback breathing */ }
       }
       userOK=true; await audio.play(); v1.play().catch(()=>{});
       if(acx && acx.state==='suspended') await acx.resume();
       btnSound.hidden=true;
+      burstParticles('#ffd54a', 10); // arranque con partículas doradas
     }catch(e){}
   };
 
-  // Tap sobre el póster: play/pause + vibración
+  // Tap sobre el póster: play/pause + vibración + partículas
   root.addEventListener('click', ()=>{
     const any = audio && !audio.paused;
-    if(any){ audio.pause(); v1.pause(); } else { audio?.play().catch(()=>{}); v1.play().catch(()=>{}); }
+    if(any){ audio.pause(); v1.pause(); burstParticles('#ff6d6d', 8); }
+    else { audio?.play().catch(()=>{}); v1.play().catch(()=>{}); burstParticles('#13d77a', 8); }
     if(navigator.vibrate) navigator.vibrate(20);
   });
 
