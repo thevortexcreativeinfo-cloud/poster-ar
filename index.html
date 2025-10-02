@@ -37,8 +37,8 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Tu vídeo de Cloudinary: se centra y NO se mueve -->
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- Evita warning inicial; el src real lo pone JS con CFG.video -->
+    <video id="v1" src="about:blank" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
@@ -123,7 +123,7 @@
       p.setAttribute('position',`${s.x} ${s.y} ${z}`);
       const col = i%2 ? glow2 : glow1;
       p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine`);
+      p.setAttribute('animation__glow',`property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine`);
       root.appendChild(p); setRO(p, 20, false, false);
     });
   })();
@@ -132,7 +132,7 @@
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';             // p.ej. Cloudinary mp4
+  v1.src = CFG.video || ''; // p.ej. Cloudinary mp4
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -168,7 +168,14 @@
   });
 
   const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
-  function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
+  function fitFontFor(text,wpx,hpx,weight){
+    let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74);
+    while(lo<=hi){ const mid=(lo+hi>>1);
+      ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
+      (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);
+    }
+    return best;
+  }
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
@@ -380,10 +387,9 @@
   async function bootAR(){
     try{
       log('Pidiendo permisos de cámara…');
-      // Pedimos permiso primero para maximizar compatibilidad en iOS/Android
       const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
-    }catch(e){ /* si falla, igualmente intentamos MindAR; algunos navegadores no necesitan esto */ }
+    }catch(e){ /* si falla, igualmente intentamos MindAR */ }
 
     await waitSceneLoaded();
     await waitMindARReady();
@@ -394,7 +400,11 @@
   }
 
   const btnStart=document.getElementById('btnStart');
-  btnStart.addEventListener('click', async()=>{ btnStart.disabled=true; try{ await bootAR(); }catch(e){ btnStart.disabled=false; log(`No se pudo iniciar cámara (${e.name||''} ${e.message||e})`);} });
+  btnStart.addEventListener('click', async()=>{
+    btnStart.disabled=true;
+    try{ await bootAR(); }
+    catch(e){ btnStart.disabled=false; log(`No se pudo iniciar cámara (${e.name||''} ${e.message||e})`); }
+  });
 
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); }catch{}
@@ -409,8 +419,6 @@
 
   // También intentamos arrancar en el primer gesto (iOS)
   window.addEventListener('pointerdown', ()=>{ if(!scene?.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
-
-  /* ========== FIN ========== */
 })();
 </script>
 </body>
