@@ -8,14 +8,19 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* WebGL delante */
+  /* Feed de cámara de MindAR al fondo (sólo esos ids) */
+  #mindar-image-video, #mindar-video{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
+  /* WebGL por delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
   /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s;white-space:pre}
   .dbg:hover{opacity:1}
 </style>
 </head>
@@ -27,10 +32,12 @@
 <div id="dbg" class="dbg">Listo…</div>
 
 <a-scene id="scene"
-  embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
+  embedded
+  vr-mode-ui="enabled:false"
+  device-orientation-permission-ui="enabled:false"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
+  mindar-image="uiLoading: true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
@@ -49,7 +56,24 @@
   const qs = new URLSearchParams(location.search);
   const log = (...m) => { const el=document.getElementById('dbg'); el.textContent = m.join(' ')+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',...m); };
 
+  /* ---------- Parchea getUserMedia para forzar cámara trasera ---------- */
+  (function patchGUM(){
+    const orig = navigator.mediaDevices && navigator.mediaDevices.getUserMedia && navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    if(!orig) return;
+    navigator.mediaDevices.getUserMedia = function(constraints){
+      constraints = constraints || {};
+      if(!constraints.video) constraints.video = {};
+      if(typeof constraints.video === 'object'){
+        if(!('facingMode' in constraints.video)) constraints.video.facingMode = {ideal:'environment'};
+        if(!('width' in constraints.video)) constraints.video.width = {ideal:1280};
+        if(!('height' in constraints.video)) constraints.video.height = {ideal:720};
+      }
+      return orig(constraints);
+    };
+  })();
+
   /* ---------- Helpers ---------- */
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -57,18 +81,16 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const getRay = ()=>document.getElementById('mouseRay')?.components?.raycaster || null;
+  const mindarVideoEl = ()=> document.getElementById('mindar-image-video') || document.getElementById('mindar-video');
 
-  // Estilar SOLO el vídeo de cámara (cuando MindAR lo cree)
+  /* Estila sólo el feed de MindAR cuando aparezca */
   new MutationObserver(()=>{
-    document.querySelectorAll('video').forEach(v=>{
-      if(v.srcObject instanceof MediaStream){
-        Object.assign(v.style,{
-          objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'
-        });
-      }
-    });
+    const mv = mindarVideoEl();
+    if(mv){
+      mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
+      mv.muted = true;
+    }
   }).observe(document.documentElement,{subtree:true,childList:true});
 
   /* ---------- Cargar JSON ---------- */
@@ -81,7 +103,7 @@
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+    `imageTargetSrc:${CFG.target}; uiLoading:true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
   const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
@@ -93,7 +115,7 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Póster: fondo ---------- */
+  /* ---------- Fondo (papel) ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
@@ -108,7 +130,7 @@
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- Vídeo de CONTENIDO ---------- */
+  /* ---------- Vídeo de CONTENIDO (siempre centrado) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
@@ -123,6 +145,7 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
+  // crop tipo object-fit: cover, centrado y fijo (sin animaciones)
   function coverFromMap(map){
     if(!map || !v1.videoWidth) return;
     const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
@@ -131,9 +154,12 @@
     map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
   }
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
-  v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
+  v1.addEventListener('loadedmetadata', ()=>{
+    const map=vPlane.getObject3D('mesh')?.material?.map;
+    if(map) coverFromMap(map);
+  });
 
-  // Fallback a VideoTexture si hiciera falta
+  // Fallback a THREE.VideoTexture si hiciera falta
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -146,12 +172,31 @@
     log('Fallback a THREE.VideoTexture');
   }
   const checkBlackFallback=()=>{
-    const mesh=vPlane.getObject3D('mesh');
-    const map=mesh?.material?.map;
+    const mv=mindarVideoEl();
+    const okCam = mv && mv.videoWidth>0 && mv.readyState>=2;
+    if(!okCam){ log('⚠️ Feed de cámara no activo, reintentando…'); tryRestartMindAR(); }
+    const mesh=vPlane.getObject3D('mesh'), map=mesh?.material?.map;
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   };
 
-  /* ---------- Canvas overlay: textos + barra + espectro grande ---------- */
+  async function tryRestartMindAR(){
+    const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
+    try{ sys && sys.stop && sys.stop(); }catch{}
+    await new Promise(r=>setTimeout(r,200));
+    try{
+      if(sys && sys.start) await sys.start();
+      else if(comp && comp.start) await comp.start();
+      setTimeout(()=>{
+        const mv=mindarVideoEl();
+        if(mv){
+          mv.muted=true; mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
+          if(mv.paused) mv.play().catch(()=>{});
+        }
+      }, 100);
+    }catch(e){ log('❌ Reinicio MindAR falló:', e && (e.name||e.message)||e); }
+  }
+
+  /* ---------- Overlay canvas: textos + espectro grande ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -181,7 +226,7 @@
       const AC=window.AudioContext||window.webkitAudioContext;
       acx=new AC();
       analyser=acx.createAnalyser();
-      analyser.fftSize=256;              // más resolución
+      analyser.fftSize=256;
       analyser.smoothingTimeConstant=0.88;
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
@@ -191,10 +236,8 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Espectro ampliado ---------- */
-  const BARS=64;                         // más barras
-  const waveH=Math.round(80*Cw/2048);   // bastante más alto
-  const gap=Math.round(36*Cw/2048);     // separación mayor
+  /* ---------- Espectro grande (64 barras, doble banda) ---------- */
+  const BARS=64, waveH=Math.round(80*Cw/2048), gap=Math.round(36*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   const mmss=t=>{ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; };
 
@@ -216,13 +259,12 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra base
+    // Barra base + progreso
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(4,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
-    // Progreso
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -231,15 +273,14 @@
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
-    // Knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(4, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-    ctx.font = `700 ${Math.round(30*Cw/2048)}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(cur, pbx, pby - 12);
+
+    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic';
+    ctx.textAlign='left';  ctx.font = `700 ${Math.round(30*Cw/2048)}px system-ui,Segoe UI,Roboto`; ctx.fillText(cur, pbx, pby - 12);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 12);
 
-    // Espectro doble grande
+    // Espectro doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
@@ -258,8 +299,8 @@
         peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
 
         const x = Math.round(pbx + i*step + step*0.14);
-        const w = Math.max(3, Math.round(step*0.70));           // barras más gruesas
-        const h = Math.max(4, Math.round(levels[i]*waveH));      // más altas
+        const w = Math.max(3, Math.round(step*0.70));
+        const h = Math.max(4, Math.round(levels[i]*waveH));
         const peakY = Math.max(5, Math.round(peaks[i]*waveH));
 
         const dist = Math.abs((x+w/2) - sweepX);
@@ -268,13 +309,11 @@
         ctx.fillStyle = col;
         if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
-        // peak-hold
         ctx.globalAlpha = 0.7; ctx.fillStyle='#000';
         if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
         else         ctx.fillRect(x, baseY+peakY,   w, 2);
         ctx.globalAlpha = 1;
 
-        // glow barrido
         if(glow>0){
           const g = ctx.createLinearGradient(x,0,x+w,0);
           g.addColorStop(0, 'rgba(255,255,255,'+(0.16*glow)+')');
@@ -290,27 +329,15 @@
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Ken Burns suave ---------- */
-  function kenBurns(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map){ requestAnimationFrame(kenBurns); return; }
-    const t=mesh.material.map;
-    const rx=t.repeat.x, ry=t.repeat.y, ox=t.offset.x, oy=t.offset.y;
-    const dx=(Math.sin(performance.now()/6500)*0.015)*rx, dy=(Math.cos(performance.now()/9500)*0.015)*ry;
-    t.offset.set(clamp(ox+dx,0,1-rx), clamp(oy+dy,0,1-ry)); t.needsUpdate=true;
-    requestAnimationFrame(kenBurns);
-  }
-  requestAnimationFrame(kenBurns);
-
   /* ---------- Corazones: física + drag ---------- */
   const HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[];
   const area={x1:-0.5+0.03,x2:0.5-0.03,y1:-H/2+0.03,y2:H/2-0.03};
 
-  // Plano invisible para click/drag (no tapa visualmente)
   const dragPlane=document.createElement('a-plane');
   dragPlane.classList.add('dragplane','ui3d');
   dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
-  dragPlane.setAttribute('position','0 0 0.07'); // por delante del vídeo
+  dragPlane.setAttribute('position','0 0 0.07');
   dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
   root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
 
@@ -328,7 +355,6 @@
     if(hearts.length>28){ const old=hearts.shift(); if(old?.el) old.el.remove(); }
   }
 
-  // Tap en área para crear corazón
   dragPlane.addEventListener('click', ()=>{
     const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
     let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
@@ -336,7 +362,6 @@
     spawnHeart(clamp(p.x,area.x1,area.x2), clamp(p.y,area.y1,area.y2));
   });
 
-  // Drag de corazones
   let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
   function pointerLocal(){
     const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
@@ -381,25 +406,38 @@
 
   /* ---------- Estados / UI ---------- */
   const btnStart=document.getElementById('btnStart');
+
+  // Arranque: sólo MindAR (dejamos que él pida la cámara)
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true; log('Pidiendo cámara…');
-      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      s.getTracks().forEach(t=>t.stop());
+      btnStart.disabled=true; log('Arrancando cámara con MindAR…');
       const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
       btnStart.textContent='Cámara lista';
+      const mv=mindarVideoEl();
+      if(mv){
+        mv.muted=true; mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
+        if(mv.paused) mv.play().catch(()=>{});
+      }
+      // Watchdog: si en ~1.8s no hay vídeo, reintenta
+      setTimeout(checkBlackFallback, 1800);
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
     }
   };
 
+  // Reintento si la pestaña vuelve al frente o el vídeo queda pausado
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible'){
+      const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{});
+      setTimeout(checkBlackFallback, 600);
+    }
+  });
+
   anchor.addEventListener('targetFound', async ()=>{
-    try{
-      await v1.play();
-      setTimeout(checkBlackFallback, 200);
-    }catch{}
+    try{ await v1.play(); }catch{}
+    setTimeout(()=>{ const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{}); }, 100);
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
@@ -410,8 +448,8 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer gesto ayuda a iOS + arranque
-  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
+  // Primer gesto ayuda a iOS + arranque directo
+  window.addEventListener('pointerup', ()=>{ const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
