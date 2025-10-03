@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* WebGL delante, pero transparente para ver la cámara */
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important;background:transparent!important}
   /* UI */
@@ -29,19 +29,19 @@
 <a-scene id="scene"
   embedded
   vr-mode-ui="enabled:false"
-  device-orientation-permission-ui="enabled:false"
+  device-orientation-permission-ui="enabled:true"
   renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
   mindar-image="uiLoading: true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Vídeo de CONTENIDO (no es la cámara) -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity id="mouseRay" cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 4"></a-entity>
+    <a-entity id="mouseRay" cursor="rayOrigin: mouse"
+              raycaster="objects: .ui3d,.heart,.dragplane; far: 4"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -63,15 +63,14 @@
   }
   const getRay = ()=>document.getElementById('mouseRay')?.components?.raycaster || null;
 
-  /* Estilo SOLO al vídeo de cámara de MindAR (cuando exista) */
-  const styleCameraVideo = () => {
+  // Estilar SOLO el vídeo de cámara de MindAR cuando aparezca
+  function styleCameraVideo(){
     const mv = document.getElementById('mindar-image-video') || document.getElementById('mindar-video');
     if(mv && mv.srcObject instanceof MediaStream){
-      Object.assign(mv.style, {position:'fixed', inset:'0', width:'100vw', height:'100vh', objectFit:'cover', zIndex:'0', background:'#000'});
+      Object.assign(mv.style,{position:'fixed',inset:'0',width:'100vw',height:'100vh',objectFit:'cover',zIndex:'0',background:'#000'});
     }
-  };
-  const mo = new MutationObserver(styleCameraVideo);
-  mo.observe(document.documentElement,{subtree:true,childList:true});
+  }
+  new MutationObserver(styleCameraVideo).observe(document.documentElement,{subtree:true,childList:true});
 
   /* ---------- Cargar JSON ---------- */
   const cfgUrl = qs.get('cfg');
@@ -82,12 +81,9 @@
 
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
-  // asegurar canvas transparente
-  scene.addEventListener('loaded', ()=>{
-    if(scene.renderer) scene.renderer.setClearColor(0x000000, 0); // alpha 0
-  });
+  scene.addEventListener('loaded', ()=>{ if(scene.renderer) scene.renderer.setClearColor(0x000000, 0); });
 
-  // colocar tu target (con uiLoading BIEN)
+  // Aplicar target del cliente
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading:true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
@@ -131,6 +127,7 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
+  // cover (crop tipo object-fit:cover) + centrado
   function coverFromMap(map){
     if(!map || !v1.videoWidth) return;
     const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
@@ -141,7 +138,7 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // Fallback a VideoTexture si hiciera falta
+  // Fallback a THREE.VideoTexture si el video quedara negro
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -153,13 +150,13 @@
     forcedVideoTex=true;
     log('Fallback a THREE.VideoTexture');
   }
-  const checkBlackFallback=()=>{
+  function checkBlackFallback(){
     const mesh=vPlane.getObject3D('mesh');
     const map=mesh?.material?.map;
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
-  };
+  }
 
-  /* ---------- Canvas overlay: textos + espectro grande ---------- */
+  /* ---------- Canvas overlay: títulos + barra + espectro GRANDE ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -175,7 +172,12 @@
   });
 
   const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
-  function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
+  function fitFontFor(text,wpx,hpx,weight){
+    let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74);
+    while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`;
+      if(ctx.measureText(text).width<=wpx*0.94){ best=mid; lo=mid+1; } else { hi=mid-1; } }
+    return best;
+  }
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
@@ -199,7 +201,7 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Espectro ampliado (grande) ---------- */
+  /* ---------- Espectro ampliado ---------- */
   const BARS=64;
   const waveH=Math.round(80*Cw/2048);
   const gap=Math.round(36*Cw/2048);
@@ -303,7 +305,7 @@
   const dragPlane=document.createElement('a-plane');
   dragPlane.classList.add('dragplane','ui3d');
   dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
-  dragPlane.setAttribute('position','0 0 0.07');
+  dragPlane.setAttribute('position','0 0 0.07'); // ligeramente delante
   dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
   root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
 
@@ -373,13 +375,15 @@
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true;
-      log('Arrancando MindAR…');
-      const sys=scene.systems['mindar-image-system'];
-      const comp=scene.components['mindar-image'];
+      btnStart.disabled=true; log('Pidiendo cámara…');
+      // Pedimos permiso rápido para reducir fricción; cerramos tracks y dejamos que MindAR gestione la cámara.
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+      s.getTracks().forEach(t=>t.stop());
+
+      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
-      styleCameraVideo(); // en cuanto exista el vídeo, se estiliza
-      log('Cámara iniciada');
+      styleCameraVideo();
+      btnStart.textContent='Cámara lista';
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
@@ -398,6 +402,8 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
+  // primer gesto ayuda a medios en iOS/Android
+  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); }, {once:true,passive:true});
 })();
 </script>
 </body>
