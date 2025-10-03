@@ -8,13 +8,15 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Solo el vídeo de MindAR como fondo (cubrimos dos ids posibles) */
+  /* Vídeo de MindAR al fondo (cubre ids usados por mind-ar) */
   #mindar-video, #mindar-image-video{
     position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important
   }
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -37,7 +39,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Vídeo de CONTENIDO (no la cámara). Se asigna por JS -->
+    <!-- Vídeo de CONTENIDO (no la cámara). Se asigna por JS tras cargar el JSON -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -72,18 +74,45 @@
   }
   function mindarVideoEl(){ return document.getElementById('mindar-video') || document.getElementById('mindar-image-video'); }
 
+  /* ---------- estado de readiness (arregla el “Preparando…”) ---------- */
+  var scene = document.getElementById('scene');
+  var btnStart = document.getElementById('btnStart');
+  var btnAudio = document.getElementById('btnAudio');
+  var readyScene = !!scene.hasLoaded;
+  var readyMindAR = !!scene.components['mindar-image'];
+  var cfgLoaded = false;
+
+  function armButton(){
+    if(readyScene && readyMindAR && cfgLoaded){
+      btnStart.disabled=false;
+      btnStart.textContent='📷 Abrir cámara';
+      log('Listo para iniciar cámara (escena+mindar+cfg OK)');
+    }
+  }
+  if(!readyScene){
+    scene.addEventListener('loaded', function(){ readyScene=true; armButton(); });
+  }
+  if(!readyMindAR){
+    scene.addEventListener('componentinitialized', function(e){
+      if(e.detail && e.detail.name==='mindar-image'){ readyMindAR=true; armButton(); }
+    });
+  } else {
+    // ya estaba inicializado cuando cargó el HTML
+    armButton();
+  }
+
   /* ---------- cargar cfg ---------- */
   var cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
+  log('Cargando cfg:', cfgUrl);
   fetch(cfgUrl, {mode:'cors', cache:'no-store'})
     .then(function(r){ return r.json(); })
-    .then(function(CFG){ init(CFG); })
+    .then(function(CFG){ cfgLoaded=true; armButton(); init(CFG); })
     .catch(function(){ log('❗ No pude cargar el JSON'); });
 
   function init(CFG){
-    var scene = document.getElementById('scene');
-
-    /* MindAR conf */
+    log('CFG cargado');
+    /* actualizar mindar con el target del cfg */
     scene.setAttribute('mindar-image',
       'imageTargetSrc:'+CFG.target+'; uiLoading: true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
@@ -150,7 +179,7 @@
       runner(u.cx+u.wn/2, u.cy-u.hn/2-0.012, u.cx-u.wn/2, u.cy-u.hn/2-0.012, glow2, 300);
     })();
 
-    /* vídeo de CONTENIDO */
+    /* vídeo de CONTENIDO (no cámara) */
     var v1=document.getElementById('v1');
     v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
     v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
@@ -207,7 +236,6 @@
     var artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
     /* Audio + analyser */
-    var btnAudio=document.getElementById('btnAudio');
     var audio=null, acx=null, analyser=null;
     function setupAudio(){
       if(audio) return;
@@ -392,27 +420,10 @@
       requestAnimationFrame(heartsTick);
     })();
 
-    /* ---------- botón cámara: garantiza gesto ---------- */
-    var btnStart=document.getElementById('btnStart');
-    var readyScene=false, readyMindAR=false;
-
-    scene.addEventListener('loaded', function(){ readyScene=true; armButton(); });
-    scene.addEventListener('componentinitialized', function(e){
-      if(e.detail && e.detail.name==='mindar-image'){ readyMindAR=true; armButton(); }
-    });
-
-    function armButton(){
-      if(readyScene && readyMindAR){
-        btnStart.disabled=false;
-        btnStart.textContent='📷 Abrir cámara';
-      }
-    }
-
+    /* ---------- botón cámara: arranque en el MISMO gesto ---------- */
     btnStart.addEventListener('click', function(){
-      // IMPORTANTE: arrancar dentro del MISMO gesto
       btnStart.disabled=true;
       log('Arrancando MindAR…');
-
       var comp=scene.components['mindar-image'];
       var sys =scene.systems['mindar-image-system'];
       var p = comp && comp.start ? comp.start() : (sys && sys.start ? sys.start() : Promise.reject(new Error('No MindAR start')));
@@ -420,36 +431,31 @@
         btnStart.textContent='Cámara lista';
         var mv=mindarVideoEl();
         if(mv){
-          mv.setAttribute('playsinline','true');
-          mv.setAttribute('webkit-playsinline','true');
-          mv.muted=true;
-          if(mv.paused){ mv.play().catch(function(){}); }
+          mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
+          mv.muted=true; if(mv.paused){ mv.play().catch(function(){}); }
           log('Cámara OK. paused='+mv.paused+', size='+mv.videoWidth+'x'+mv.videoHeight);
         }else{
-          log('MindAR activo pero no veo el video aún…');
+          log('MindAR activo, esperando video…');
         }
       }).catch(function(e){
         btnStart.disabled=false;
         btnStart.textContent='📷 Abrir cámara';
-        log('Fallo al iniciar MindAR:', e && e.name, e && e.message || e);
+        log('Fallo al iniciar MindAR:', e && e.name, e && (e.message||e));
       });
     });
 
     /* target events */
-    var btnAudio=document.getElementById('btnAudio');
-    var audioEnabled=false;
     anchor.addEventListener('targetFound', function(){
       v1.play().catch(function(){});
-      if(!audioEnabled){ setupAudio(); audioEnabled=true; }
+      if(btnAudio.disabled){ setupAudio(); btnAudio.disabled=false; }
       var mv=mindarVideoEl(); if(mv && mv.paused){ mv.play().catch(function(){}); }
-      btnAudio.disabled=false;
       log('Target FOUND');
     });
     anchor.addEventListener('targetLost', function(){
       v1.pause(); if(audio) audio.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
     });
 
-    /* gesto de seguridad (si algo queda pausado) */
+    /* gesto de seguridad para iOS */
     window.addEventListener('pointerdown', function(){
       var mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(function(){});
     }, {passive:true});
