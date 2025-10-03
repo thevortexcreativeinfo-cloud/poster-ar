@@ -9,8 +9,10 @@
 <style>
   html,body{margin:0;height:100%;background:#000}
   /* Cámara del móvil detrás (fullscreen cover) */
-  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important}
+  video[playsinline]{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
   /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
@@ -37,8 +39,8 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Tu vídeo de Cloudinary: se centra y NO se mueve -->
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- src provisional para evitar warning de A-Frame; en JS se cambia por CFG.video -->
+    <video id="v1" src="about:blank" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
@@ -98,7 +100,7 @@
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ========== Marco animado bonito ========== */
+  /* ========== Marco animado sutil (no mueve el vídeo) ========== */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const glow1 = CFG.colors?.wave1 || '#13d77a';
   const glow2 = CFG.colors?.wave2 || '#ffd54a';
@@ -123,16 +125,16 @@
       p.setAttribute('position',`${s.x} ${s.y} ${z}`);
       const col = i%2 ? glow2 : glow1;
       p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine`);
+      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
       root.appendChild(p); setRO(p, 20, false, false);
     });
   })();
 
-  /* ========== VÍDEO centrado (sin desplazamientos) ========== */
+  /* ========== VÍDEO centrado (sin desplazamientos ni “Ken Burns”) ========== */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';             // p.ej. Cloudinary mp4
+  v1.src = CFG.video || '';   // ej: tu Cloudinary mp4
   v1.load();
 
   const vPlane=document.createElement('a-plane');
@@ -159,7 +161,7 @@
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
+  overlay.setAttribute('position','0 0 0.0');  /* debajo del vídeo */
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlay); setRO(overlay, 3, false, false);
   overlay.addEventListener('loaded', ()=>{
@@ -304,6 +306,7 @@
   }
 
   let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+
   function pointerLocal(){
     const ray = getRay(); const ints = ray?.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('dragplane'));
@@ -314,7 +317,8 @@
   }
   function heartFromEl(el){ return hearts.find(h=>h.el===el)||null; }
 
-  scene.addEventListener('mousedown', ()=>{
+  // Usamos eventos pointer para que funcione igual en móvil/desktop
+  scene.addEventListener('pointerdown', ()=>{
     const ray = getRay(); const ints = ray?.intersections || [];
     const hit = ints.find(i => i.object && i.object.el && i.object.el.classList.contains('heart'));
     if(!hit) return;
@@ -323,8 +327,8 @@
     dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
     lastPointer = p; lastTime = performance.now();
   });
-  scene.addEventListener('mouseup', ()=>{ dragging=null; });
-  scene.addEventListener('mouseleave', ()=>{ dragging=null; });
+  scene.addEventListener('pointerup',   ()=>{ dragging=null; });
+  scene.addEventListener('pointerleave',()=>{ dragging=null; });
 
   (function heartsTick(){
     const dt = 1/60, g=-0.8, damp=0.55;
@@ -358,7 +362,7 @@
     requestAnimationFrame(heartsTick);
   })();
 
-  /* ========== START DEL BOTÓN — MÁS ROBUSTO ========== */
+  /* ========== START DEL BOTÓN — ROBUSTO ========== */
   async function waitSceneLoaded(){
     if(scene.hasLoaded) return;
     await new Promise(res=>scene.addEventListener('loaded', res, {once:true}));
@@ -379,22 +383,24 @@
   }
   async function bootAR(){
     try{
-      log('Pidiendo permisos de cámara…');
-      // Pedimos permiso primero para maximizar compatibilidad en iOS/Android
+      // Permiso previo mejora compatibilidad en iOS/Android
       const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
-    }catch(e){ /* si falla, igualmente intentamos MindAR; algunos navegadores no necesitan esto */ }
+    }catch(e){ /* algunos navegadores no lo necesitan */ }
 
     await waitSceneLoaded();
     await waitMindARReady();
-    log('Iniciando MindAR…');
     await startMindAR();
     document.getElementById('btnStart').textContent='Cámara lista';
     log('Cámara iniciada');
   }
 
   const btnStart=document.getElementById('btnStart');
-  btnStart.addEventListener('click', async()=>{ btnStart.disabled=true; try{ await bootAR(); }catch(e){ btnStart.disabled=false; log(`No se pudo iniciar cámara (${e.name||''} ${e.message||e})`);} });
+  btnStart.addEventListener('click', async()=>{
+    btnStart.disabled=true;
+    try{ await bootAR(); }
+    catch(e){ btnStart.disabled=false; log(`No se pudo iniciar cámara (${e.name||''} ${e.message||e})`); }
+  });
 
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); }catch{}
@@ -407,10 +413,9 @@
   });
   anchor.addEventListener('targetLost', ()=>{ v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…'); });
 
-  // También intentamos arrancar en el primer gesto (iOS)
+  // Arranque también en el primer gesto (iOS)
   window.addEventListener('pointerdown', ()=>{ if(!scene?.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 
-  /* ========== FIN ========== */
 })();
 </script>
 </body>
