@@ -41,9 +41,8 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <!-- ampliamos el raycaster para corazones y el plano de arrastre -->
     <a-entity id="mouseRay" cursor="rayOrigin: mouse"
-              raycaster="objects: .ui3d,.heart,.dragplane; far: 4"></a-entity>
+              raycaster="objects: .ui3d,.heart,.dragplane; near:0.001; far: 5"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -54,7 +53,9 @@
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* ---------- Helpers ---------- */
+  /* ---------- helpers ---------- */
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -62,15 +63,24 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
 
-  /* ---------- Cargar JSON ---------- */
+  /* ---------- patch gUM: si falla trasera, usa la que haya ---------- */
+  if(navigator.mediaDevices?.getUserMedia){
+    const _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (c)=>_orig(c).catch(err=>{
+      if(err?.name==='NotFoundError' || err?.name==='OverconstrainedError'){
+        return _orig({video:true,audio:false}); // frontal/por defecto
+      }
+      throw err;
+    });
+  }
+
+  /* ---------- carga CFG ---------- */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
-  catch(e){ log('❗ No pude cargar el JSON de cliente'); return; }
+  catch(e){ log('❗ No pude cargar el JSON'); return; }
 
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
@@ -94,23 +104,22 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Póster: fondo blanco ---------- */
+  /* ---------- fondo póster ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- Marco muy fino ---------- */
+  /* ---------- marco fino ---------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-
   const frameThin=document.createElement('a-plane');
   frameThin.setAttribute('width',u.wn*1.012); frameThin.setAttribute('height',u.hn*1.012);
   frameThin.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- Plano del VÍDEO ---------- */
+  /* ---------- vídeo (quieto, sin ken-burns) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
@@ -125,7 +134,6 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
-  // cover (crop tipo object-fit:cover)
   function coverFromMap(map){
     if(!map || !v1.videoWidth) return;
     const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
@@ -136,7 +144,7 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // Fallback a THREE.VideoTexture si quedara negro
+  // fallback si quedara negro
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -154,7 +162,7 @@
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   }
 
-  /* ---------- Canvas overlay (tu UI existente) ---------- */
+  /* ---------- overlay canvas (texto + barra) ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -174,7 +182,7 @@
   const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
   const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  /* ---------- Audio + analyser ---------- */
+  /* ---------- audio + analyser ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null;
   function setupAudio(){
@@ -194,7 +202,7 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Barra musical + cinta inferior (igual que tenías) ---------- */
+  /* ---------- barra musical (igual que tu base) ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -202,7 +210,7 @@
   function draw(){
     ctx.clearRect(0,0,Cw,Ch);
 
-    // Título
+    // título
     const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -210,20 +218,20 @@
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
     ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
 
-    // Artista
+    // artista
     const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
           aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra base
+    // barra base
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
     ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
 
-    // Progreso
+    // progreso
     let p=0, cur='0:00', dur='0:00';
     if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
     const fw=Math.max(2, Math.floor(pbw*p));
@@ -232,7 +240,7 @@
     grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
     ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
 
-    // Knob + tiempos
+    // knob + tiempos
     const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
@@ -240,7 +248,7 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Espectro doble
+    // espectro doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
@@ -288,52 +296,16 @@
       }
     }
 
-    // Cinta inferior suave (igual que tenías)
-    const bandH = Math.round(50*Cw/2048);
-    const yBand = Math.round((PH*0.88)*Ch/PH);
-    const g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
-    g2.addColorStop(0,'rgba(0,0,0,0.06)');
-    g2.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
-
-    ctx.save();
-    ctx.globalAlpha = 0.65;
-    ctx.beginPath();
-    const A = 10, L = 220, v = t/900;
-    ctx.moveTo(0, yBand + bandH/2);
-    for(let x=0;x<=Cw;x+=6){
-      const y = yBand + bandH/2 + Math.sin((x+v*120)/L)*A + Math.sin((x+v*180)/L*1.7)*A*0.5;
-      ctx.lineTo(x,y);
-    }
-    ctx.lineTo(Cw, yBand+bandH); ctx.lineTo(0, yBand+bandH); ctx.closePath();
-    const c1 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
-    c1.addColorStop(0, (CFG.colors?.wave1||'#13d77a')+'22');
-    c1.addColorStop(1, (CFG.colors?.wave2||'#ffd54a')+'14');
-    ctx.fillStyle=c1; ctx.fill();
-    ctx.restore();
-
     if(overlay.__tex) overlay.__tex.needsUpdate = true;
     requestAnimationFrame(draw);
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Ken Burns suave ---------- */
-  function kenBurns(){
-    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map){ requestAnimationFrame(kenBurns); return; }
-    const t=mesh.material.map;
-    const rx=t.repeat.x, ry=t.repeat.y, ox=t.offset.x, oy=t.offset.y;
-    const dx=(Math.sin(performance.now()/6500)*0.015)*rx, dy=(Math.cos(performance.now()/9500)*0.015)*ry;
-    t.offset.set(clamp(ox+dx,0,1-rx), clamp(oy+dy,0,1-ry)); t.needsUpdate=true;
-    requestAnimationFrame(kenBurns);
-  }
-  requestAnimationFrame(kenBurns);
-
-  /* ---------- CORAZONES (tap para crear, drag + física en todo el póster) ---------- */
+  /* ---------- CORAZONES: tap para crear, drag + física ---------- */
   const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
   const hearts=[]; // {el,x,y,vx,vy}
   const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
-  // plano invisible para recibir taps y calcular coordenadas locales
   const dragPlane=document.createElement('a-plane');
   dragPlane.classList.add('dragplane','ui3d');
   dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
@@ -355,29 +327,27 @@
     if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
   }
 
-  // tap para crear corazón donde toques
-  dragPlane.addEventListener('click', ()=>{
-    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
-    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
-    if(!hit) return;
-    const p=hit.point.clone(); root.object3D.worldToLocal(p);
-    spawnHeart(clamp(p.x,area.x1,area.x2), clamp(p.y,area.y1,area.y2));
-  });
-
-  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
-
   function pointerLocal(){
-    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
-    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
+    const ray=getRay(); const ints=ray?.intersections || [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
     if(!hit) return null;
     const p=hit.point.clone(); root.object3D.worldToLocal(p);
     return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
   }
+
+  const tapCreate = ()=>{
+    const p = pointerLocal(); if(!p) return;
+    spawnHeart(p.x,p.y);
+  };
+  dragPlane.addEventListener('click', tapCreate);
+  dragPlane.addEventListener('pointerdown', tapCreate); // ayuda en móvil
+
+  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
   function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
 
   scene.addEventListener('pointerdown', ()=>{
-    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
-    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; } }
+    const ray=getRay(); const ints=ray?.intersections || [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el?.classList?.contains('heart')){ hit=ints[i]; break; } }
     if(!hit) return;
     const h=heartFromEl(hit.object.el); if(!h) return;
     const p=pointerLocal(); if(!p) return;
@@ -418,39 +388,58 @@
     requestAnimationFrame(heartsTick);
   })();
 
-  /* ---------- Estados / UI (igual que tu base) ---------- */
+  /* ---------- botón cámara estable ---------- */
+  async function waitSceneLoaded(){
+    if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true}));
+  }
+  async function waitMindARReady(){
+    if(scene.components['mindar-image']) return;
+    await new Promise(res=>{
+      function onInit(e){ if(e.detail?.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } }
+      scene.addEventListener('componentinitialized', onInit);
+    });
+  }
+  async function startMindAROnce(){
+    const comp=scene.components['mindar-image'];
+    const sys =scene.systems['mindar-image-system'];
+    if(sys?.active) return; // ya activo
+    if(comp?.start) await comp.start(); else if(sys?.start) await sys.start(); else throw new Error('No MindAR start method');
+  }
+
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true; log('Pidiendo cámara…');
-      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+      btnStart.disabled=true; btnStart.textContent='Preparando…'; log('Pidiendo cámara…');
+      // pedir permiso con trasera; si falla cae al patch
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      await waitSceneLoaded();
+      await waitMindARReady();
+      await startMindAROnce();
       btnStart.textContent='Cámara lista';
+      log('Cámara iniciada');
     }catch(e){
-      btnStart.disabled=false;
+      btnStart.disabled=false; btnStart.textContent='📷 Abrir cámara';
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
     }
   };
 
+  /* ---------- eventos de target ---------- */
+  const btnAudio=document.getElementById('btnAudio');
+  let audio=null, acx=null; // (redefinidas arriba)
   anchor.addEventListener('targetFound', async ()=>{
-    try{
-      await v1.play();
-      setTimeout(checkBlackFallback, 200);
-    }catch{}
+    try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
-    document.getElementById('btnAudio').disabled=false;
+    btnAudio.disabled=false;
     log('Target FOUND');
   });
-
   anchor.addEventListener('targetLost', ()=>{
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer gesto (iOS)
-  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
+  // iOS: primer gesto ayuda a media
+  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); if(!scene.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
