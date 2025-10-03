@@ -202,7 +202,7 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- barra musical (igual que tu base) ---------- */
+  /* ---------- barra musical ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -410,7 +410,6 @@
   btnStart.onclick=async()=>{
     try{
       btnStart.disabled=true; btnStart.textContent='Preparando…'; log('Pidiendo cámara…');
-      // pedir permiso con trasera; si falla cae al patch
       const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
       s.getTracks().forEach(t=>t.stop());
       await waitSceneLoaded();
@@ -425,8 +424,6 @@
   };
 
   /* ---------- eventos de target ---------- */
-  const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null; // (redefinidas arriba)
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
     setupAudio();
