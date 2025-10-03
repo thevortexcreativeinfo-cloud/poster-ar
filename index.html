@@ -301,92 +301,105 @@
   }
   requestAnimationFrame(draw);
 
-  /* ---------- CORAZONES: tap para crear, drag + física ---------- */
-  const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-  const hearts=[]; // {el,x,y,vx,vy}
-  const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
+ /* ---------- CORAZONES: tap para crear, drag + física (robusto) ---------- */
+const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+const hearts=[]; // {el,x,y,vx,vy}
+const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
-  const dragPlane=document.createElement('a-plane');
-  dragPlane.classList.add('dragplane','ui3d');
-  dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
-  dragPlane.setAttribute('position','0 0 0.07');
-  dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
+const dragPlane=document.createElement('a-plane');
+dragPlane.classList.add('dragplane','ui3d');
+dragPlane.setAttribute('width',1); 
+dragPlane.setAttribute('height',H);
+dragPlane.setAttribute('position','0 0 0.07');
+dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+root.appendChild(dragPlane); 
+setRO(dragPlane, 150, false, false);
+// muy importante: refrescar objetos del raycaster cuando añadimos algo clicable
+getRay()?.refreshObjects?.();
 
-  function spawnHeart(x,y){
-    const xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
-    const yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
-    const h = document.createElement('a-image');
-    h.setAttribute('src', HEART_SVG);
-    h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
-    h.setAttribute('position', `${xx} ${yy} 0.06`);
-    h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
-    h.classList.add('ui3d','heart');
-    root.appendChild(h); setRO(h, 140, false, false);
-    hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
-    if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
+function spawnHeart(x,y){
+  const xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
+  const yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
+  const h = document.createElement('a-image');
+  h.classList.add('ui3d','heart');
+  h.setAttribute('src', HEART_SVG);
+  h.setAttribute('width', 0.14);  // un poco más grande para asegurar visibilidad
+  h.setAttribute('height', 0.14);
+  h.setAttribute('position', `${xx} ${yy} 0.06`);
+  // forzar que siempre se vean por delante
+  h.setAttribute('material', 'transparent:true; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(h); 
+  setRO(h, 140, false, false);
+  hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
+  if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
+  getRay()?.refreshObjects?.();
+}
+
+// util: intersección con el dragPlane usando el raycaster actual
+function pointerLocal(){
+  const ray=getRay(); const ints=ray?.intersections || [];
+  let hit=null; 
+  for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
+  if(!hit) return null;
+  const p=hit.point.clone(); root.object3D.worldToLocal(p);
+  return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
+}
+
+// gestos: cursor click + fallback a click global de escena (móviles)
+const tapCreate = ()=>{
+  const p = pointerLocal(); if(!p) return;
+  spawnHeart(p.x,p.y);
+};
+dragPlane.addEventListener('click', tapCreate);
+scene.addEventListener('click', tapCreate);   // fallback seguro
+
+let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
+
+scene.addEventListener('pointerdown', ()=>{
+  const ray=getRay(); const ints=ray?.intersections || [];
+  let hit=null; 
+  for(let i=0;i<ints.length;i++){ if(ints[i].object?.el?.classList?.contains('heart')){ hit=ints[i]; break; } }
+  if(!hit) return;
+  const h=heartFromEl(hit.object.el); if(!h) return;
+  const p=pointerLocal(); if(!p) return;
+  dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
+  lastPointer=p; lastTime=performance.now();
+});
+scene.addEventListener('pointerup',   ()=>{ dragging=null; });
+scene.addEventListener('pointerleave',()=>{ dragging=null; });
+
+(function heartsTick(){
+  const dt=1/60, g=-0.4, damp=0.60; // gravedad ligera + rebote
+  const now=performance.now();
+  const p=pointerLocal();
+
+  if(dragging && p){
+    const nx=clamp(p.x+dragOffset.x, area.x1, area.x2);
+    const ny=clamp(p.y+dragOffset.y, area.y1, area.y2);
+    if(lastPointer){
+      const dtms=Math.max(16, now-lastTime);
+      dragging.vx=(nx-dragging.x)/(dtms/1000);
+      dragging.vy=(ny-dragging.y)/(dtms/1000);
+    }
+    dragging.x=nx; dragging.y=ny;
+    lastPointer=p; lastTime=now;
   }
 
-  function pointerLocal(){
-    const ray=getRay(); const ints=ray?.intersections || [];
-    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
-    if(!hit) return null;
-    const p=hit.point.clone(); root.object3D.worldToLocal(p);
-    return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
+  for(let i=0;i<hearts.length;i++){
+    const o=hearts[i];
+    if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
+    if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+    if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+    if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+    if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+    o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
+    o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
   }
 
-  const tapCreate = ()=>{
-    const p = pointerLocal(); if(!p) return;
-    spawnHeart(p.x,p.y);
-  };
-  dragPlane.addEventListener('click', tapCreate);
-  dragPlane.addEventListener('pointerdown', tapCreate); // ayuda en móvil
+  requestAnimationFrame(heartsTick);
+})();
 
-  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
-  function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
-
-  scene.addEventListener('pointerdown', ()=>{
-    const ray=getRay(); const ints=ray?.intersections || [];
-    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el?.classList?.contains('heart')){ hit=ints[i]; break; } }
-    if(!hit) return;
-    const h=heartFromEl(hit.object.el); if(!h) return;
-    const p=pointerLocal(); if(!p) return;
-    dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
-    lastPointer=p; lastTime=performance.now();
-  });
-  scene.addEventListener('pointerup',   ()=>{ dragging=null; });
-  scene.addEventListener('pointerleave',()=>{ dragging=null; });
-
-  (function heartsTick(){
-    const dt=1/60, g=-0.4, damp=0.60; // gravedad ligera + rebote
-    const now=performance.now();
-    const p=pointerLocal();
-
-    if(dragging && p){
-      const nx=clamp(p.x+dragOffset.x, area.x1, area.x2);
-      const ny=clamp(p.y+dragOffset.y, area.y1, area.y2);
-      if(lastPointer){
-        const dtms=Math.max(16, now-lastTime);
-        dragging.vx=(nx-dragging.x)/(dtms/1000);
-        dragging.vy=(ny-dragging.y)/(dtms/1000);
-      }
-      dragging.x=nx; dragging.y=ny;
-      lastPointer=p; lastTime=now;
-    }
-
-    for(let i=0;i<hearts.length;i++){
-      const o=hearts[i];
-      if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
-      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-      o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
-      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
-    }
-
-    requestAnimationFrame(heartsTick);
-  })();
 
   /* ---------- botón cámara estable ---------- */
   async function waitSceneLoaded(){
