@@ -38,11 +38,14 @@
 
   <a-assets timeout="60000">
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <!-- Textura del corazón pre-cargada para evitar problemas de data: URI -->
+    <img id="heartImg" crossorigin="anonymous"
+         src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>'>
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity id="mouseRay" cursor="rayOrigin: mouse"
-              raycaster="objects: .ui3d,.heart,.dragplane; near:0.001; far: 5"></a-entity>
+              raycaster="objects: .ui3d,.heart,.dragplane; near:0.001; far:5; interval:0"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -63,13 +66,18 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+  function refreshRay(){
+    const r = getRay();
+    if(!r) return;
+    try{ r.refreshObjects && r.refreshObjects(); }catch{}
+  }
 
   /* ---------- patch gUM: si falla trasera, usa la que haya ---------- */
   if(navigator.mediaDevices?.getUserMedia){
     const _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = (c)=>_orig(c).catch(err=>{
       if(err?.name==='NotFoundError' || err?.name==='OverconstrainedError'){
-        return _orig({video:true,audio:false}); // frontal/por defecto
+        return _orig({video:true,audio:false});
       }
       throw err;
     });
@@ -119,7 +127,7 @@
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- vídeo (quieto, sin ken-burns) ---------- */
+  /* ---------- vídeo (quieto) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
@@ -144,7 +152,6 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // fallback si quedara negro
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -301,105 +308,106 @@
   }
   requestAnimationFrame(draw);
 
- /* ---------- CORAZONES: tap para crear, drag + física (robusto) ---------- */
-const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-const hearts=[]; // {el,x,y,vx,vy}
-const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
+  /* ---------- CORAZONES: tap para crear, drag + física (robusto) ---------- */
+  const hearts=[]; // {el,x,y,vx,vy}
+  const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
-const dragPlane=document.createElement('a-plane');
-dragPlane.classList.add('dragplane','ui3d');
-dragPlane.setAttribute('width',1); 
-dragPlane.setAttribute('height',H);
-dragPlane.setAttribute('position','0 0 0.07');
-dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-root.appendChild(dragPlane); 
-setRO(dragPlane, 150, false, false);
-// muy importante: refrescar objetos del raycaster cuando añadimos algo clicable
-getRay()?.refreshObjects?.();
+  // plano invisible receptor de clicks (un poco POR DELANTE del vídeo)
+  const dragPlane=document.createElement('a-plane');
+  dragPlane.classList.add('dragplane','ui3d');
+  dragPlane.setAttribute('width',1);
+  dragPlane.setAttribute('height',H);
+  dragPlane.setAttribute('position','0 0 0.06');
+  dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(dragPlane);
+  setRO(dragPlane, 130, false, false);
+  refreshRay();
 
-function spawnHeart(x,y){
-  const xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
-  const yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
-  const h = document.createElement('a-image');
-  h.classList.add('ui3d','heart');
-  h.setAttribute('src', HEART_SVG);
-  h.setAttribute('width', 0.14);  // un poco más grande para asegurar visibilidad
-  h.setAttribute('height', 0.14);
-  h.setAttribute('position', `${xx} ${yy} 0.06`);
-  // forzar que siempre se vean por delante
-  h.setAttribute('material', 'transparent:true; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(h); 
-  setRO(h, 140, false, false);
-  hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
-  if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
-  getRay()?.refreshObjects?.();
-}
+  function spawnHeart(x,y){
+    const xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
+    const yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
+    const h = document.createElement('a-image');
+    h.classList.add('ui3d','heart');
+    h.setAttribute('width', 0.14);
+    h.setAttribute('height', 0.14);
+    h.setAttribute('position', `${xx} ${yy} 0.08`); // SIEMPRE delante de dragPlane
+    h.setAttribute('material', 'src:#heartImg; transparent:true; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
+    root.appendChild(h);
+    setRO(h, 140, false, false);
+    hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
+    if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
+    refreshRay();
+  }
 
-// util: intersección con el dragPlane usando el raycaster actual
-function pointerLocal(){
-  const ray=getRay(); const ints=ray?.intersections || [];
-  let hit=null; 
-  for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
-  if(!hit) return null;
-  const p=hit.point.clone(); root.object3D.worldToLocal(p);
-  return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
-}
-
-// gestos: cursor click + fallback a click global de escena (móviles)
-const tapCreate = ()=>{
-  const p = pointerLocal(); if(!p) return;
-  spawnHeart(p.x,p.y);
-};
-dragPlane.addEventListener('click', tapCreate);
-scene.addEventListener('click', tapCreate);   // fallback seguro
-
-let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
-function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
-
-scene.addEventListener('pointerdown', ()=>{
-  const ray=getRay(); const ints=ray?.intersections || [];
-  let hit=null; 
-  for(let i=0;i<ints.length;i++){ if(ints[i].object?.el?.classList?.contains('heart')){ hit=ints[i]; break; } }
-  if(!hit) return;
-  const h=heartFromEl(hit.object.el); if(!h) return;
-  const p=pointerLocal(); if(!p) return;
-  dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
-  lastPointer=p; lastTime=performance.now();
-});
-scene.addEventListener('pointerup',   ()=>{ dragging=null; });
-scene.addEventListener('pointerleave',()=>{ dragging=null; });
-
-(function heartsTick(){
-  const dt=1/60, g=-0.4, damp=0.60; // gravedad ligera + rebote
-  const now=performance.now();
-  const p=pointerLocal();
-
-  if(dragging && p){
-    const nx=clamp(p.x+dragOffset.x, area.x1, area.x2);
-    const ny=clamp(p.y+dragOffset.y, area.y1, area.y2);
-    if(lastPointer){
-      const dtms=Math.max(16, now-lastTime);
-      dragging.vx=(nx-dragging.x)/(dtms/1000);
-      dragging.vy=(ny-dragging.y)/(dtms/1000);
+  // click directo del dragPlane: usamos detail.intersection si existe
+  dragPlane.addEventListener('click', (e)=>{
+    let wp = e?.detail?.intersection?.point;
+    if(wp){
+      const p = wp.clone ? wp.clone() : new AFRAME.THREE.Vector3(wp.x,wp.y,wp.z);
+      root.object3D.worldToLocal(p);
+      spawnHeart(clamp(p.x,area.x1,area.x2), clamp(p.y,area.y1,area.y2));
+    }else{
+      // fallback a raycaster actual
+      const ray=getRay(); const ints=ray?.intersections||[];
+      let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
+      if(hit){ const p=hit.point.clone(); root.object3D.worldToLocal(p); spawnHeart(clamp(p.x,area.x1,area.x2),clamp(p.y,area.y1,area.y2)); }
+      else spawnHeart(); // último recurso
     }
-    dragging.x=nx; dragging.y=ny;
-    lastPointer=p; lastTime=now;
+  });
+
+  // drag & física
+  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+  function pointerLocal(){
+    const ray=getRay(); const ints=ray?.intersections || [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el===dragPlane){ hit=ints[i]; break; } }
+    if(!hit) return null;
+    const p=hit.point.clone(); root.object3D.worldToLocal(p);
+    return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
   }
+  function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
 
-  for(let i=0;i<hearts.length;i++){
-    const o=hearts[i];
-    if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
-    if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-    if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-    if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-    if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-    o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
-    o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
-  }
+  scene.addEventListener('pointerdown', ()=>{
+    const ray=getRay(); const ints=ray?.intersections || [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object?.el?.classList?.contains('heart')){ hit=ints[i]; break; } }
+    if(!hit) return;
+    const h=heartFromEl(hit.object.el); if(!h) return;
+    const p=pointerLocal(); if(!p) return;
+    dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
+    lastPointer=p; lastTime=performance.now();
+  });
+  scene.addEventListener('pointerup',   ()=>{ dragging=null; });
+  scene.addEventListener('pointerleave',()=>{ dragging=null; });
 
-  requestAnimationFrame(heartsTick);
-})();
+  (function heartsTick(){
+    const dt=1/60, g=-0.4, damp=0.60;
+    const now=performance.now();
+    const p=pointerLocal();
 
+    if(dragging && p){
+      const nx=clamp(p.x+dragOffset.x, area.x1, area.x2);
+      const ny=clamp(p.y+dragOffset.y, area.y1, area.y2);
+      if(lastPointer){
+        const dtms=Math.max(16, now-lastTime);
+        dragging.vx=(nx-dragging.x)/(dtms/1000);
+        dragging.vy=(ny-dragging.y)/(dtms/1000);
+      }
+      dragging.x=nx; dragging.y=ny;
+      lastPointer=p; lastTime=now;
+    }
+
+    for(let i=0;i<hearts.length;i++){
+      const o=hearts[i];
+      if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
+      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+      o.el.setAttribute('position', `${o.x} ${o.y} 0.08`);
+      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
+    }
+
+    requestAnimationFrame(heartsTick);
+  })();
 
   /* ---------- botón cámara estable ---------- */
   async function waitSceneLoaded(){
@@ -415,7 +423,7 @@ scene.addEventListener('pointerleave',()=>{ dragging=null; });
   async function startMindAROnce(){
     const comp=scene.components['mindar-image'];
     const sys =scene.systems['mindar-image-system'];
-    if(sys?.active) return; // ya activo
+    if(sys?.active) return; 
     if(comp?.start) await comp.start(); else if(sys?.start) await sys.start(); else throw new Error('No MindAR start method');
   }
 
@@ -439,6 +447,8 @@ scene.addEventListener('pointerleave',()=>{ dragging=null; });
   /* ---------- eventos de target ---------- */
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
+    // corazón de prueba para verificar visibilidad inmediata
+    spawnHeart(0, 0);
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     btnAudio.disabled=false;
