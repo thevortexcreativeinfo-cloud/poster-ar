@@ -8,10 +8,13 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
+  /* Cámara detrás, modo cover */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -34,6 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
+    <!-- Deja el <video> sin src aquí; se lo asignamos por JS -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -48,7 +52,7 @@
 (function(){
   'use strict';
 
-  /* ---------- Parche gUM: si la trasera falla, usa cualquiera ---------- */
+  /* ---------- Parche getUserMedia: si no hay trasera, usa cualquiera ---------- */
   if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
     var _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = function(c){
@@ -63,14 +67,23 @@
 
   /* ---------- Helpers ---------- */
   var qs = new URLSearchParams(location.search);
-  function log(m){ var el=document.getElementById('dbg'); el.textContent=m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200); console.log('[AR]',m); }
+  function log(m){
+    var el=document.getElementById('dbg');
+    el.textContent=m+' · '+new Date().toLocaleTimeString();
+    el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200);
+    if(window.console && console.log) console.log('[AR]',m);
+  }
   function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
   function getRay(){ var r=document.getElementById('mouseRay'); return r && r.components ? r.components.raycaster : null; }
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', function(){
       var mesh = el.getObject3D('mesh'); if(!mesh) return;
       mesh.renderOrder = order;
-      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
+      if(mesh.material){
+        mesh.material.depthTest=!!depthTest;
+        mesh.material.depthWrite=!!depthWrite;
+        mesh.material.needsUpdate=true;
+      }
     });
   }
 
@@ -85,7 +98,7 @@
   function init(CFG){
     var scene = document.getElementById('scene');
 
-    /* Cámara fondo cover */
+    /* Cámara de fondo (cover) */
     new MutationObserver(function(){
       var vids = document.querySelectorAll('video');
       for(var i=0;i<vids.length;i++){
@@ -96,7 +109,7 @@
       }
     }).observe(document.documentElement,{subtree:true,childList:true});
 
-    /* MindAR config */
+    /* MindAR */
     scene.setAttribute('mindar-image',
       'imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
@@ -166,7 +179,7 @@
     var v1=document.getElementById('v1');
     v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
     v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-    v1.src = CFG.video || '';  /* asegurarse de que NO esté vacío */
+    v1.src = CFG.video || '';
     v1.load();
 
     var vPlane=document.createElement('a-plane');
@@ -235,13 +248,19 @@
     }
     btnAudio.addEventListener('click', function(){
       setupAudio();
-      Promise.resolve().then(function(){
-        if(audio.paused){
-          if(acx && acx.state==='suspended'){ return acx.resume(); }
-        }
-      }).then(function(){ if(audio.paused) return audio.play(); else audio.pause(); })
-      .catch(function(){});
+      if(acx && acx.state==='suspended'){
+        acx.resume().then(function(){ toggleAudio(); }).catch(function(){});
+      }else{
+        toggleAudio();
+      }
     });
+    function toggleAudio(){
+      try{
+        if(!audio) return;
+        if(audio.paused){ audio.play().catch(function(){}); }
+        else { audio.pause(); }
+      }catch(e){}
+    }
 
     var BARS=64, waveH=Math.round(60*Cw/2048), gap=Math.round(28*Cw/2048);
     var levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
@@ -330,8 +349,8 @@
     requestAnimationFrame(draw);
 
     /* Corazones con física + drag (en todo el póster) */
-    var HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-    var hearts=[]; 
+    var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+    var hearts=[];
     var area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
     var dragPlane=document.createElement('a-plane');
@@ -379,7 +398,9 @@
     scene.addEventListener('pointerdown', function(){
       var ray=getRay(); var ints=ray && ray.intersections ? ray.intersections : [];
       var hit=null;
-      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; } }
+      for(var i=0;i<ints.length;i++){
+        if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; }
+      }
       if(!hit) return;
       var h=heartFromEl(hit.object.el); if(!h) return;
       var p=pointerLocal(); if(!p) return;
@@ -444,7 +465,7 @@
     }
     function bootAR(){
       return navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false})
-      .then(function(s){ s.getTracks().forEach(function(t){ t.stop(); }); })
+      .then(function(s){ if(s && s.getTracks){ s.getTracks().forEach(function(t){ t.stop(); }); }})
       .catch(function(){})
       .then(waitSceneLoaded)
       .then(waitMindARReady)
@@ -465,9 +486,13 @@
     anchor.addEventListener('targetFound', function(){
       v1.play().catch(function(){});
       setupAudio();
-      Promise.resolve().then(function(){ if(acx && acx.state==='suspended') return acx.resume(); })
-        .then(function(){ if(audio && audio.paused) return audio.play(); })
-        .catch(function(){});
+      if(acx && acx.state==='suspended'){
+        acx.resume().then(function(){
+          if(audio && audio.paused){ audio.play().catch(function(){}); }
+        }).catch(function(){});
+      }else{
+        if(audio && audio.paused){ audio.play().catch(function(){}); }
+      }
       document.getElementById('btnAudio').disabled=false;
       log('Target FOUND');
     });
