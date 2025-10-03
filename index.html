@@ -8,10 +8,13 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
+  /* Cámara del móvil detrás (fullscreen cover) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -34,7 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- SIN src aquí (lo asignamos por JS para evitar CORS) -->
+    <!-- SIN src aquí: lo asignamos por JS (evita CORS raros) -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -47,96 +50,108 @@
 
 <script>
 (function(){
-  const qs = new URLSearchParams(location.search);
-  const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  function getRay(){ const r=document.getElementById('mouseRay'); return r && r.components ? r.components.raycaster : null; }
+  /* ====== Parche global a getUserMedia: fallback si no hay trasera ====== */
+  (function(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    var orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = function(constraints){
+      return orig(constraints).catch(function(err){
+        // Si falla por no encontrar dispositivo, probamos la frontal/por defecto
+        if(err && (err.name==='NotFoundError' || err.name==='OverconstrainedError')){
+          return orig({video:true, audio:false});
+        }
+        throw err;
+      });
+    };
+  })();
 
+  const qs = new URLSearchParams(location.search);
+  const log = function(m){ var el=document.getElementById('dbg'); el.textContent=m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200); console.log('[AR]',m); };
+  const clamp=function(v,a,b){ return Math.max(a,Math.min(b,v)); };
+  function getRay(){ var r=document.getElementById('mouseRay'); return r && r.components ? r.components.raycaster : null; }
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', function(){
-      const mesh = el.getObject3D('mesh'); if(!mesh) return;
+      var mesh = el.getObject3D('mesh'); if(!mesh) return;
       mesh.renderOrder = order;
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
 
   /* ===== Cargar JSON ===== */
-  const cfgUrl = qs.get('cfg');
+  var cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
-  let CFG=null;
-  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(r=>r.json()).then(json=>{
-    CFG=json; init();
+  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){return r.json();}).then(function(CFG){
+    init(CFG);
   }).catch(function(){ log('❗ No pude cargar el JSON'); });
 
-  function init(){
-    /* ===== MindAR ===== */
-    const scene = document.getElementById('scene');
-    scene.setAttribute('mindar-image',
-      'imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
+  function init(CFG){
+    /* ===== MindAR y cámara de fondo ===== */
+    var scene = document.getElementById('scene');
+    scene.setAttribute('mindar-image','imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
-    new MutationObserver(function(){ 
-      document.querySelectorAll('video').forEach(function(v){
+    new MutationObserver(function(){
+      Array.prototype.forEach.call(document.querySelectorAll('video'), function(v){
         if(v.srcObject instanceof MediaStream){
           Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
         }
       });
     }).observe(document.documentElement,{subtree:true,childList:true});
 
-    const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
+    var PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
     function px2(x,y,w,h){ return {wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW}; }
 
-    const anchor=document.getElementById('anchor');
-    const root=document.createElement('a-entity'); anchor.appendChild(root);
-    const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
+    var anchor=document.getElementById('anchor');
+    var root=document.createElement('a-entity'); anchor.appendChild(root);
+    var cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
     root.setAttribute('position', (cal.dx/PW)+' '+(-cal.dy/PW)+' 0');
     root.setAttribute('scale', cal.scale+' '+cal.scale+' 1');
     root.setAttribute('rotation', '0 0 '+cal.rot);
 
-    /* ===== Póster ===== */
-    const paper=document.createElement('a-plane');
+    /* ===== Fondo del póster ===== */
+    var paper=document.createElement('a-plane');
     paper.setAttribute('width',1); paper.setAttribute('height',H);
     paper.setAttribute('position','0 0 -0.02');
     paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
     root.appendChild(paper); setRO(paper, 1, false, false);
 
     /* ===== Marco animado (no tapa el vídeo) ===== */
-    const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-    const glow1 = (CFG.colors&&CFG.colors.wave1) ? CFG.colors.wave1 : '#13d77a';
-    const glow2 = (CFG.colors&&CFG.colors.wave2) ? CFG.colors.wave2 : '#ffd54a';
+    var vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
+    var glow1 = (CFG.colors&&CFG.colors.wave1) ? CFG.colors.wave1 : '#13d77a';
+    var glow2 = (CFG.colors&&CFG.colors.wave2) ? CFG.colors.wave2 : '#ffd54a';
 
-    const frame=document.createElement('a-plane');
+    var frame=document.createElement('a-plane');
     frame.setAttribute('width',u.wn*1.012); frame.setAttribute('height',u.hn*1.012);
     frame.setAttribute('position',u.cx+' '+u.cy+' 0.000');
     frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
     root.appendChild(frame); setRO(frame, 5, false, false);
 
     (function stripsGlow(){
-      const t=0.004, z=0.018;
-      const strips=[
+      var t=0.004, z=0.018;
+      var strips=[
         {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
         {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy-u.hn/2-t/2},
         {w:t,       h:u.hn, x:u.cx-u.wn/2-t/2,y:u.cy},
         {w:t,       h:u.hn, x:u.cx+u.wn/2+t/2,y:u.cy}
       ];
       strips.forEach(function(s,i){
-        const p=document.createElement('a-plane');
+        var p=document.createElement('a-plane');
         p.setAttribute('width',s.w); p.setAttribute('height',s.h);
         p.setAttribute('position',s.x+' '+s.y+' '+z);
-        const col = i%2 ? glow2 : glow1;
+        var col = i%2 ? glow2 : glow1;
         p.setAttribute('material','shader:standard; color:'+col+'; emissive:'+col+'; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95');
         p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
         root.appendChild(p); setRO(p, 20, false, false);
       });
     })();
 
-    /* ===== Vídeo centrado (sin Ken Burns) ===== */
-    const v1=document.getElementById('v1');
+    /* ===== Vídeo centrado (sin moverse) ===== */
+    var v1=document.getElementById('v1');
     v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
     v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
     v1.src = CFG.video || '';  // tu Cloudinary mp4
     v1.load();
 
-    const vPlane=document.createElement('a-plane');
+    var vPlane=document.createElement('a-plane');
     vPlane.setAttribute('width',u.wn);
     vPlane.setAttribute('height',u.hn);
     vPlane.setAttribute('position',u.cx+' '+u.cy+' 0.02');
@@ -145,34 +160,34 @@
 
     function coverFromMap(map){
       if(!map || !v1.videoWidth) return;
-      const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
+      var vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
       var rx=1,ry=1,ox=0,oy=0;
       if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
       map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
     }
     vPlane.addEventListener('materialtextureloaded', function(e){ coverFromMap(e.detail.texture); });
     v1.addEventListener('loadedmetadata', function(){
-      const mesh=vPlane.getObject3D('mesh');
+      var mesh=vPlane.getObject3D('mesh');
       if(mesh && mesh.material && mesh.material.map) coverFromMap(mesh.material.map);
     });
 
     /* ===== Canvas overlay (textos + barra musical) ===== */
-    const Cw=2048, Ch=Math.round(Cw*H);
-    const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-    const ctx=canvas.getContext('2d');
+    var Cw=2048, Ch=Math.round(Cw*H);
+    var canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
+    var ctx=canvas.getContext('2d');
 
-    const overlay=document.createElement('a-plane');
+    var overlay=document.createElement('a-plane');
     overlay.setAttribute('width',1); overlay.setAttribute('height',H);
     overlay.setAttribute('position','0 0 0.0');  // debajo del vídeo
     overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
     root.appendChild(overlay); setRO(overlay, 3, false, false);
     overlay.addEventListener('loaded', function(){
-      const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
-      const m=overlay.getObject3D('mesh'); if(m&&m.material){ m.material.map=tex; m.material.needsUpdate=true; }
+      var tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
+      var m=overlay.getObject3D('mesh'); if(m&&m.material){ m.material.map=tex; m.material.needsUpdate=true; }
       overlay.__tex=tex;
     });
 
-    const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
+    var titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
     function fitFontFor(text,wpx,hpx,weight){
       var lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74);
       while(lo<=hi){
@@ -182,10 +197,10 @@
       }
       return best;
     }
-    const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
-    const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+    var titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
+    var artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-    const btnAudio=document.getElementById('btnAudio');
+    var btnAudio=document.getElementById('btnAudio');
     var audio=null, acx=null, analyser=null;
     function setupAudio(){
       if(audio) return;
@@ -209,7 +224,7 @@
       })();
     };
 
-    const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
+    var BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
     var levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
     function mmss(t){ if(!isFinite(t)||t<0) t=0; var m=Math.floor(t/60), s=Math.floor(t%60); return m+':'+String(s).padStart(2,'0'); }
 
@@ -250,7 +265,7 @@
       ctx.fillText(cur, pbx, pby - 10);
       ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-      // Espectro
+      // Espectro con smoothing + peaks + barrido
       var arr = analyser ? (new Uint8Array(analyser.frequencyBinCount)) : null;
       if(arr) analyser.getByteFrequencyData(arr);
 
@@ -264,7 +279,7 @@
 
         for(var i=0;i<BARS;i++){
           var bandIndex = arr ? Math.min(arr.length-1, 2+i) : 0;
-          var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
+          var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35)))));
           levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
           peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
 
@@ -279,6 +294,7 @@
           ctx.fillStyle = col;
           if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
+          // peak hold
           ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
           if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
           ctx.globalAlpha = 1;
@@ -299,21 +315,21 @@
     requestAnimationFrame(draw);
 
     /* ===== Corazones con física + drag ===== */
-    const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+    var HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
     var hearts=[]; // {el,x,y,vx,vy}
-    const area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
+    var area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
 
-    const dragPlane=document.createElement('a-plane');
+    var dragPlane=document.createElement('a-plane');
     dragPlane.classList.add('dragplane');
     dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
     dragPlane.setAttribute('position','0 0 0.07');
     dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
     root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
 
-    function spawnHeart(x, y){
-      const xx = (typeof x==='number')?x: (area.x1+area.x2)/2;
-      const yy = (typeof y==='number')?y: area.y2-0.05;
-      const h = document.createElement('a-image');
+    function spawnHeart(x,y){
+      var xx = (typeof x==='number')?x: (area.x1+area.x2)/2;
+      var yy = (typeof y==='number')?y: area.y2-0.05;
+      var h = document.createElement('a-image');
       h.setAttribute('src', HEART_SVG);
       h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
       h.setAttribute('position', xx+' '+yy+' 0.06');
@@ -321,27 +337,27 @@
       h.classList.add('ui3d','heart');
       root.appendChild(h); setRO(h, 140, false, false);
       hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.05, vy:0.3+Math.random()*0.12});
-      if(hearts.length>24){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
+      if(hearts.length>24){ var old=hearts.shift(); if(old && old.el) old.el.remove(); }
     }
 
     var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
 
     function pointerLocal(){
-      const ray = getRay(); const ints = ray && ray.intersections ? ray.intersections : [];
-      const hit = ints.find(function(i){ return i.object && i.object.el && i.object.el.classList.contains('dragplane'); });
+      var ray = getRay(); var ints = ray && ray.intersections ? ray.intersections : [];
+      var hit = ints.find(function(i){ return i.object && i.object.el && i.object.el.classList.contains('dragplane'); });
       if(!hit) return null;
-      const p = hit.point.clone();
+      var p = hit.point.clone();
       root.object3D.worldToLocal(p);
       return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
     }
     function heartFromEl(el){ for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
 
     scene.addEventListener('pointerdown', function(){
-      const ray = getRay(); const ints = ray && ray.intersections ? ray.intersections : [];
-      const hit = ints.find(function(i){ return i.object && i.object.el && i.object.el.classList.contains('heart'); });
+      var ray = getRay(); var ints = ray && ray.intersections ? ray.intersections : [];
+      var hit = ints.find(function(i){ return i.object && i.object.el && i.object.el.classList.contains('heart'); });
       if(!hit) return;
-      const h = heartFromEl(hit.object.el); if(!h) return;
-      const p = pointerLocal(); if(!p) return;
+      var h = heartFromEl(hit.object.el); if(!h) return;
+      var p = pointerLocal(); if(!p) return;
       dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
       lastPointer = p; lastTime = performance.now();
     });
@@ -349,15 +365,15 @@
     scene.addEventListener('pointerleave',function(){ dragging=null; });
 
     (function heartsTick(){
-      const dt = 1/60, g=-0.8, damp=0.55;
-      const now = performance.now();
-      const p = pointerLocal();
+      var dt = 1/60, g=-0.8, damp=0.55;
+      var now = performance.now();
+      var p = pointerLocal();
 
       if(dragging && p){
-        const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
-        const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
+        var nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
+        var ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
         if(lastPointer){
-          const dtms = Math.max(16, now-lastTime);
+          var dtms = Math.max(16, now-lastTime);
           dragging.vx = (nx - dragging.x) / (dtms/1000);
           dragging.vy = (ny - dragging.y) / (dtms/1000);
         }
@@ -366,9 +382,7 @@
       }
 
       hearts.forEach(function(o){
-        if(o!==dragging){
-          o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt;
-        }
+        if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
         if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
         if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
         if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
@@ -380,7 +394,7 @@
       requestAnimationFrame(heartsTick);
     })();
 
-    /* ===== Botón de cámara robusto ===== */
+    /* ===== Botón de cámara robusto (con fallback) ===== */
     function waitSceneLoaded(){
       return new Promise(function(res){
         if(scene.hasLoaded) return res();
@@ -390,25 +404,21 @@
     function waitMindARReady(){
       return new Promise(function(res){
         if(scene.components['mindar-image']) return res();
-        function onInit(e){
-          if(e.detail && e.detail.name==='mindar-image'){
-            scene.removeEventListener('componentinitialized', onInit);
-            res();
-          }
-        }
+        function onInit(e){ if(e.detail && e.detail.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } }
         scene.addEventListener('componentinitialized', onInit);
       });
     }
     async function startMindAR(){
-      const comp = scene.components['mindar-image'];
-      const sys  = scene.systems['mindar-image-system'];
+      var comp = scene.components['mindar-image'];
+      var sys  = scene.systems['mindar-image-system'];
       if(comp && comp.start){ await comp.start(); return; }
       if(sys  && sys.start){  await sys.start();  return; }
       throw new Error('No MindAR start method');
     }
     async function bootAR(){
       try{
-        const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
+        // Pedimos permiso primero (el parche gUM hará fallback a la cámara disponible)
+        var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
         s.getTracks().forEach(function(t){ t.stop(); });
       }catch(e){}
       await waitSceneLoaded();
@@ -418,17 +428,18 @@
       log('Cámara iniciada');
     }
 
-    const btnStart=document.getElementById('btnStart');
+    var btnStart=document.getElementById('btnStart');
     btnStart.addEventListener('click', function(){
       btnStart.disabled=true;
       bootAR().catch(function(e){
-        btnStart.disabled=false; log('No se pudo iniciar cámara ('+(e.name||'')+' '+(e.message||e)+')');
+        btnStart.disabled=false;
+        log('No se pudo iniciar cámara ('+(e.name||'')+' '+(e.message||e)+')');
       });
     });
 
-    /* Arranque también en el primer gesto (iOS) */
+    // También arrancamos en el primer gesto (iOS)
     window.addEventListener('pointerdown', function(){
-      const sys = scene.systems['mindar-image-system'];
+      var sys = scene.systems['mindar-image-system'];
       if(!sys || !sys.active) btnStart.click();
     }, {once:true,passive:true});
 
