@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás, modo cover */
+  /* Cámara detrás, cover */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
   /* WebGL delante */
@@ -37,7 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Deja el <video> sin src aquí; se lo asignamos por JS -->
+    <!-- sin src aquí; se asigna por JS -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -52,7 +52,7 @@
 (function(){
   'use strict';
 
-  /* ---------- Parche getUserMedia: si no hay trasera, usa cualquiera ---------- */
+  /* Fallback gUM: si la trasera falla, usa cualquiera disponible */
   if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
     var _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = function(c){
@@ -65,7 +65,7 @@
     };
   }
 
-  /* ---------- Helpers ---------- */
+  /* Helpers */
   var qs = new URLSearchParams(location.search);
   function log(m){
     var el=document.getElementById('dbg');
@@ -87,7 +87,7 @@
     });
   }
 
-  /* ---------- Cargar JSON ---------- */
+  /* Cargar JSON */
   var cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
   fetch(cfgUrl, {mode:'cors', cache:'no-store'})
@@ -98,7 +98,7 @@
   function init(CFG){
     var scene = document.getElementById('scene');
 
-    /* Cámara de fondo (cover) */
+    /* Cámara de fondo cover */
     new MutationObserver(function(){
       var vids = document.querySelectorAll('video');
       for(var i=0;i<vids.length;i++){
@@ -314,7 +314,18 @@
 
         for(var i=0;i<BARS;i++){
           var bandIndex = arr ? Math.min(arr.length-1, 2+i) : 0;
-          var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35)))));
+
+          /* ****** Cálculo de 'raw' SIN paréntesis sobrantes ****** */
+          var raw;
+          if (arr) {
+            raw = arr[bandIndex] / 255;
+          } else {
+            var fake = Math.sin((t/420) + (i*0.35));    /* -1..1 */
+            fake = Math.abs(fake);                      /* 0..1  */
+            raw  = 0.25 + 0.75 * fake;                  /* 0.25..1, suave */
+          }
+          /* ******************************************************* */
+
           levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.010);
           peaks[i]  = Math.max(peaks[i]-0.0065, levels[i]);
 
@@ -348,7 +359,7 @@
     }
     requestAnimationFrame(draw);
 
-    /* Corazones con física + drag (en todo el póster) */
+    /* Corazones con física + drag (todo el póster) */
     var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
     var hearts=[];
     var area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
@@ -441,7 +452,7 @@
       requestAnimationFrame(heartsTick);
     })();
 
-    /* Botón cámara robusto (sin async/await) */
+    /* Botón cámara robusto (promesas, sin await) */
     function waitSceneLoaded(){
       return new Promise(function(res){ if(scene.hasLoaded) res(); else scene.addEventListener('loaded', function(){res();}, {once:true}); });
     }
