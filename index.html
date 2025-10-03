@@ -3,293 +3,366 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Poster AR · Universal (LITE)</title>
+<title>Poster AR · Universal</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Solo el feed de cámara de MindAR como fondo */
-  #mindar-image-video, #mindar-video{
-    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important
-  }
-  a-scene{position:fixed!important;inset:0!important;z-index:3!important}
-  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important}
+  /* Cámara detrás */
+  video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
+  a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
+  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
-       padding:8px 10px;color:#cfe3ff;font:12px/1.35 system-ui;z-index:8;pointer-events:none;opacity:.2;transition:opacity .35s;white-space:pre}
+       padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
   .dbg:hover{opacity:1}
 </style>
 </head>
 <body>
 <div class="ui">
-  <button id="btnStart" class="btn" type="button" disabled>⏳ Preparando…</button>
+  <button id="btnStart" class="btn" type="button">📷 Abrir cámara</button>
   <button id="btnAudio" class="btn" type="button" disabled>▶️ Audio</button>
 </div>
-<div id="dbg" class="dbg">Cargando…</div>
+<div id="dbg" class="dbg">Listo…</div>
 
 <a-scene id="scene"
-  embedded
-  vr-mode-ui="enabled:false"
-  device-orientation-permission-ui="enabled:false"
-  renderer="alpha:true;antialias:true"
+  embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
+  renderer="alpha:true;antialias:true;logarithmicDepthBuffer:true"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: true; autoStart:false; maxTrack:1"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- Vídeo de CONTENIDO (no la cámara). Se asigna por JS -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
-  <a-camera id="cam" look-controls="enabled:false"></a-camera>
+  <a-camera id="cam" look-controls="enabled:false">
+    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
+  </a-camera>
+
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
 <script>
-(function(){
-  'use strict';
+(async function(){
+  const qs = new URLSearchParams(location.search);
+  const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* ---------- utils ---------- */
-  var qs = new URLSearchParams(location.search);
-  function log(){
-    var msg=[].slice.call(arguments).join(' ');
-    var el=document.getElementById('dbg');
-    el.textContent=msg+'\n'+new Date().toLocaleTimeString();
-    el.style.opacity=.9; setTimeout(function(){el.style.opacity=.2;},1200);
-    console.log('[AR]', msg);
-  }
-  function mindarVideoEl(){ return document.getElementById('mindar-image-video') || document.getElementById('mindar-video'); }
+  /* ---------- Helpers ---------- */
   function setRO(el, order, depthTest, depthWrite){
-    el.addEventListener('loaded', function(){
-      var mesh = el.getObject3D('mesh'); if(!mesh) return;
+    el.addEventListener('loaded', ()=>{
+      const mesh = el.getObject3D('mesh'); if(!mesh) return;
       mesh.renderOrder = order;
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
-  /* ---------- cargar cfg ---------- */
-  var cfgUrl = qs.get('cfg');
+  /* ---------- Cargar JSON ---------- */
+  const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
-  fetch(cfgUrl, {mode:'cors', cache:'no-store'})
-    .then(function(r){ return r.json(); })
-    .then(function(CFG){ init(CFG); })
-    .catch(function(e){ log('❗ No pude cargar el JSON', e && e.message || e); });
+  let CFG;
+  try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
+  catch(e){ log('❗ No pude cargar el JSON de cliente'); return; }
 
-  function init(CFG){
-    var scene = document.getElementById('scene');
+  /* ---------- MindAR ---------- */
+  const scene = document.getElementById('scene');
+  scene.setAttribute('mindar-image',
+    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
-    /* Re-configura MindAR con tu target */
-    scene.setAttribute('mindar-image', 'imageTargetSrc:'+CFG.target+'; uiLoading:true; autoStart:false; maxTrack:1');
-
-    /* layout base del póster */
-    var PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
-    function px2(x,y,w,h){ return {wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW}; }
-
-    var anchor=document.getElementById('anchor');
-    var root=document.createElement('a-entity'); anchor.appendChild(root);
-
-    var cal=(CFG.cal||{dx:0,dy:0,scale:1,rot:0});
-    root.setAttribute('position', (cal.dx/PW)+' '+(-cal.dy/PW)+' 0');
-    root.setAttribute('scale', cal.scale+' '+cal.scale+' 1');
-    root.setAttribute('rotation', '0 0 '+cal.rot);
-
-    /* papel */
-    var paper=document.createElement('a-plane');
-    paper.setAttribute('width',1); paper.setAttribute('height',H);
-    paper.setAttribute('position','0 0 -0.01');
-    paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
-    root.appendChild(paper); setRO(paper, 1, false, false);
-
-    /* slot de vídeo */
-    var vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-    var glow1=(CFG.colors&&CFG.colors.wave1)||'#13d77a';
-    var glow2=(CFG.colors&&CFG.colors.wave2)||'#ffd54a';
-
-    /* marco simple (sin runners ni strips) */
-    var frame=document.createElement('a-plane');
-    frame.setAttribute('width',u.wn*1.018); frame.setAttribute('height',u.hn*1.018);
-    frame.setAttribute('position',u.cx+' '+u.cy+' 0.000');
-    frame.setAttribute('material','shader:flat; color:#e9eef2; side:double');
-    root.appendChild(frame); setRO(frame, 5, false, false);
-
-    /* vídeo de CONTENIDO */
-    var v1=document.getElementById('v1');
-    v1.crossOrigin='anonymous';
-    v1.muted=true;           // iOS autoplay-safe
-    v1.playsInline=true;     // iOS inline
-    v1.setAttribute('playsinline','true');
-    v1.setAttribute('webkit-playsinline','true');
-    v1.src = CFG.video || '';
-    v1.load();
-
-    var vPlane=document.createElement('a-plane');
-    vPlane.setAttribute('width',u.wn);
-    vPlane.setAttribute('height',u.hn);
-    vPlane.setAttribute('position',u.cx+' '+u.cy+' 0.02');
-    vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
-    root.appendChild(vPlane); setRO(vPlane, 100, true, true);
-
-    function coverFromMap(map){
-      if(!map || !v1.videoWidth) return;
-      var vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
-      var rx=1,ry=1,ox=0,oy=0;
-      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-      map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
+  // vídeo de la cámara detrás en cover
+  new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
+    if(v.srcObject instanceof MediaStream){
+      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
     }
-    vPlane.addEventListener('materialtextureloaded', function(e){ coverFromMap(e.detail.texture); });
-    v1.addEventListener('loadedmetadata', function(){
-      var mesh=vPlane.getObject3D('mesh');
-      if(mesh && mesh.material && mesh.material.map) coverFromMap(mesh.material.map);
-    });
+  });}).observe(document.documentElement,{subtree:true,childList:true});
 
-    /* Overlay canvas muy básico: Título + Artista + barra (sin animación de picos) */
-    var Cw=2048, Ch=Math.round(Cw*H);
-    var canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-    var ctx=canvas.getContext('2d');
+  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
+  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
-    var overlay=document.createElement('a-plane');
-    overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-    overlay.setAttribute('position','0 0 0.0');
-    overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
-    root.appendChild(overlay); setRO(overlay, 3, false, false);
-    overlay.addEventListener('loaded', function(){
-      var tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
-      var m=overlay.getObject3D('mesh'); if(m&&m.material){ m.material.map=tex; m.material.needsUpdate=true; }
-      overlay.__tex=tex;
-    });
+  const anchor=document.getElementById('anchor');
+  const root=document.createElement('a-entity'); anchor.appendChild(root);
+  const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
+  root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
+  root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
+  root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-    var titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
-    function fitFontFor(text,wpx,hpx,weight){
-      var lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74);
-      while(lo<=hi){
-        var mid=(lo+hi>>1);
-        ctx.font=(weight||700)+' '+mid+'px system-ui,Segoe UI,Roboto';
-        if(ctx.measureText(text).width<=wpx*0.94){ best=mid; lo=mid+1; } else { hi=mid-1; }
-      }
-      return best;
-    }
-    var titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
-    var artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+  /* ---------- Póster: fondo blanco (detrás de todo) ---------- */
+  const paper=document.createElement('a-plane');
+  paper.setAttribute('width',1); paper.setAttribute('height',H);
+  paper.setAttribute('position','0 0 -0.02');
+  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
+  root.appendChild(paper); setRO(paper, 1, false, false);
 
-    var btnAudio=document.getElementById('btnAudio');
-    var audio=null;
-    function setupAudio(){
-      if(audio) return;
-      audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
-      audio.addEventListener('play', function(){ btnAudio.textContent='⏸ Audio'; });
-      audio.addEventListener('pause',function(){ btnAudio.textContent='▶️ Audio'; });
-    }
-    btnAudio.addEventListener('click', function(){
-      setupAudio();
-      try{ if(audio.paused){ audio.play().catch(function(){}); } else { audio.pause(); } }catch(e){}
-    });
+  /* ---------- Marco muy fino (no tapa) ---------- */
+  const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-    function mmss(t){ if(!isFinite(t)||t<0) t=0; var m=Math.floor(t/60), s=Math.floor(t%60); return m+':'+String(s).padStart(2,'0'); }
+  const frameThin=document.createElement('a-plane');
+  frameThin.setAttribute('width',u.wn*1.012); frameThin.setAttribute('height',u.hn*1.012);
+  frameThin.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
+  frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
+  root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-    function draw(){
-      var glow1=(CFG.colors&&CFG.colors.wave1)||'#13d77a';
-      var glow2=(CFG.colors&&CFG.colors.wave2)||'#ffd54a';
-      ctx.clearRect(0,0,Cw,Ch);
+  /* ---------- Plano del VÍDEO (encima de todo lo demás) ---------- */
+  const v1=document.getElementById('v1');
+  v1.crossOrigin='anonymous';
+  v1.muted=true; v1.playsInline=true;
+  v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
+  v1.src = CFG.video || ''; // p.ej: https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4
+  v1.load();
 
-      // Título
-      var tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
-          tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.font='800 '+titlePx+'px system-ui,Segoe UI,Roboto';
-      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-      ctx.fillStyle=(CFG.colors&&CFG.colors.title)||'#000'; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+  const vPlane=document.createElement('a-plane');
+  vPlane.setAttribute('width',u.wn);
+  vPlane.setAttribute('height',u.hn);
+  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
+  // PRIMERA OPCIÓN: usar material src:#v1 (como cuando te iba)
+  vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
+  root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
-      // Artista
-      var ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
-          aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
-      ctx.font='600 '+artistPx+'px system-ui,Segoe UI,Roboto';
-      ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-      ctx.fillStyle=(CFG.colors&&CFG.colors.artist)||'#000'; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
-
-      // Barra simple
-      var pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
-          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(8,Math.round(barSlot.h*Ch/PH));
-      ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
-      var p=0, cur='0:00', dur='0:00';
-      if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
-      var fw=Math.max(2, Math.floor(pbw*p));
-      var grad=ctx.createLinearGradient(pbx,0,pbx+fw,0); grad.addColorStop(0, glow1); grad.addColorStop(1, glow2);
-      ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-      ctx.fillStyle='#000';
-      ctx.font='700 '+Math.round(32*Cw/2048)+'px system-ui,Segoe UI,Roboto';
-      ctx.textAlign='left';  ctx.fillText(cur, pbx, pby - 12);
-      ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 12);
-
-      if(overlay.__tex) overlay.__tex.needsUpdate = true;
-      requestAnimationFrame(draw);
-    }
-    requestAnimationFrame(draw);
-
-    /* ---------- botón cámara ---------- */
-    var btnStart=document.getElementById('btnStart');
-
-    // Detecta si ya estaba listo (algunos móviles inicializan rápido)
-    var readyScene = scene.hasLoaded;
-    var readyMindAR = !!(scene.components && scene.components['mindar-image']);
-
-    scene.addEventListener('loaded', function(){ readyScene=true; armButton(); });
-    scene.addEventListener('componentinitialized', function(e){
-      if(e.detail && e.detail.name==='mindar-image'){ readyMindAR=true; armButton(); }
-    });
-
-    function armButton(){
-      if(readyScene && readyMindAR){
-        btnStart.disabled=false;
-        btnStart.textContent='📷 Abrir cámara';
-      }
-    }
-    armButton(); // intenta habilitarlo ya si procede
-
-    btnStart.addEventListener('click', function(){
-      btnStart.disabled=true;
-      log('Arrancando MindAR…');
-      var comp=scene.components['mindar-image'];
-      var sys =scene.systems['mindar-image-system'];
-      var p = comp && comp.start ? comp.start() : (sys && sys.start ? sys.start() : Promise.reject(new Error('No MindAR start')));
-      Promise.resolve(p).then(function(){
-        btnStart.textContent='Cámara lista';
-        var mv=mindarVideoEl();
-        if(mv){
-          mv.setAttribute('playsinline','true');
-          mv.setAttribute('webkit-playsinline','true');
-          mv.muted=true;
-          if(mv.paused){ mv.play().catch(function(){}); }
-          log('Cámara OK. paused='+mv.paused+', size='+mv.videoWidth+'x'+mv.videoHeight);
-        }else{
-          log('MindAR activo pero no veo el video aún…');
-        }
-      }).catch(function(e){
-        btnStart.disabled=false;
-        btnStart.textContent='📷 Abrir cámara';
-        log('Fallo al iniciar MindAR:', e && e.name, e && e.message || e);
-      });
-    });
-
-    /* Eventos del target */
-    var audioEnabled=false;
-    anchor.addEventListener('targetFound', function(){
-      v1.play().catch(function(){});
-      if(!audioEnabled){ setupAudio(); audioEnabled=true; }
-      var mv=mindarVideoEl(); if(mv && mv.paused){ mv.play().catch(function(){}); }
-      btnAudio.disabled=false;
-      log('Target FOUND');
-    });
-    anchor.addEventListener('targetLost', function(){
-      v1.pause(); if(audio) audio.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
-    });
-
-    /* gesto de seguridad (si algo queda pausado) */
-    window.addEventListener('pointerdown', function(){
-      var mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(function(){});
-    }, {passive:true});
+  // cover (crop tipo object-fit:cover)
+  function coverFromMap(map){
+    if(!map || !v1.videoWidth) return;
+    const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
+    let rx=1,ry=1,ox=0,oy=0;
+    if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+    map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
   }
+  vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
+  v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
+
+  // FALLBACK AUTOMÁTICO a THREE.VideoTexture si el video queda negro
+  let forcedVideoTex=false;
+  function forceThreeVideoTexture(){
+    if(forcedVideoTex) return;
+    const mesh=vPlane.getObject3D('mesh'); if(!mesh) return;
+    const tex=new AFRAME.THREE.VideoTexture(v1);
+    tex.needsUpdate=true;
+    mesh.material.map=tex; mesh.material.needsUpdate=true;
+    coverFromMap(tex);
+    forcedVideoTex=true;
+    log('Fallback a THREE.VideoTexture');
+  }
+  // chequeo tras intentar reproducir
+  function checkBlackFallback(){
+    const mesh=vPlane.getObject3D('mesh');
+    const map=mesh?.material?.map;
+    // si no hay ancho de vídeo o el mapa no existe, forzamos fallback
+    if(!v1.videoWidth || !map) forceThreeVideoTexture();
+  }
+
+  /* ---------- Canvas overlay: textos + barra + animación inferior ---------- */
+  const Cw=2048, Ch=Math.round(Cw*H);
+  const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
+  const ctx=canvas.getContext('2d');
+
+  const overlay=document.createElement('a-plane');
+  overlay.setAttribute('width',1); overlay.setAttribute('height',H);
+  overlay.setAttribute('position','0 0 0.0');   // siempre por debajo del vídeo
+  overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
+  root.appendChild(overlay); setRO(overlay, 3, false, false);
+  overlay.addEventListener('loaded', ()=>{
+    const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
+    const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
+  });
+
+  const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
+  function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
+  const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
+  const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+
+  /* ---------- Audio + analyser ---------- */
+  const btnAudio=document.getElementById('btnAudio');
+  let audio=null, acx=null, analyser=null;
+  function setupAudio(){
+    if(audio) return;
+    audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      acx=new AC();
+      analyser=acx.createAnalyser();
+      analyser.fftSize=128;
+      analyser.smoothingTimeConstant=0.88;
+      const src=acx.createMediaElementSource(audio);
+      src.connect(analyser); analyser.connect(acx.destination);
+    }catch{}
+    audio.addEventListener('play', ()=>btnAudio.textContent='⏸ Audio');
+    audio.addEventListener('pause',()=>btnAudio.textContent='▶️ Audio');
+  }
+  btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
+
+  /* ---------- Barra musical mejorada + cinta inferior ---------- */
+  const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
+  const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
+  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
+
+  function draw(){
+    ctx.clearRect(0,0,Cw,Ch);
+
+    // Título
+    const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
+          tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
+    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
+    ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+
+    // Artista
+    const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
+          aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
+    ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
+    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
+    ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+
+    // Barra base
+    const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
+          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
+    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
+    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+
+    // Progreso
+    let p=0, cur='0:00', dur='0:00';
+    if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
+    const fw=Math.max(2, Math.floor(pbw*p));
+    const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
+    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
+    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
+    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
+
+    // Knob + tiempos
+    const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
+    ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+    ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
+    ctx.fillText(cur, pbx, pby - 10);
+    ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
+
+    // Espectro doble (suave con peaks y barrido)
+    const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
+    if(arr) analyser.getByteFrequencyData(arr);
+
+    const step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
+    const t = performance.now();
+    const sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
+
+    for(let pass=0; pass<2; pass++){
+      const baseY = (pass===0? yTop : yBot);
+      const col = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
+
+      for(let i=0;i<BARS;i++){
+        const bandIndex = Math.min(arr?arr.length-1:0, 2+i);
+        const raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
+        levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
+        peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
+
+        const x = Math.round(pbx + i*step + step*0.18);
+        const w = Math.max(2, Math.round(step*0.64));
+        const h = Math.max(3, Math.round(levels[i]*waveH));
+        const peakY = Math.max(4, Math.round(peaks[i]*waveH));
+
+        const dist = Math.abs((x+w/2) - sweepX);
+        const glow = Math.max(0, 1 - dist/120);
+
+        ctx.fillStyle = col;
+        if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+
+        // peak-hold
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#000';
+        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
+        else         ctx.fillRect(x, baseY+peakY,   w, 2);
+        ctx.globalAlpha = 1;
+
+        // glow barrido
+        if(glow>0){
+          const g = ctx.createLinearGradient(x,0,x+w,0);
+          g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = g;
+          if(pass===0) ctx.fillRect(x, baseY-h, w, h);
+          else         ctx.fillRect(x, baseY,   w, h);
+        }
+      }
+    }
+
+    /* --- Cinta inferior animada (limpia y sutil) --- */
+    const bandH = Math.round(50*Cw/2048);
+    const yBand = Math.round((PH*0.88)*Ch/PH); // zona baja del póster
+    const g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
+    g2.addColorStop(0,'rgba(0,0,0,0.06)');
+    g2.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
+    // ondas suaves
+    ctx.save();
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    const A = 10, L = 220, v = t/900;
+    ctx.moveTo(0, yBand + bandH/2);
+    for(let x=0;x<=Cw;x+=6){
+      const y = yBand + bandH/2 + Math.sin((x+v*120)/L)*A + Math.sin((x+v*180)/L*1.7)*A*0.5;
+      ctx.lineTo(x,y);
+    }
+    ctx.lineTo(Cw, yBand+bandH); ctx.lineTo(0, yBand+bandH); ctx.closePath();
+    const c1 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
+    c1.addColorStop(0, (CFG.colors?.wave1||'#13d77a')+'22');
+    c1.addColorStop(1, (CFG.colors?.wave2||'#ffd54a')+'14');
+    ctx.fillStyle=c1; ctx.fill();
+    ctx.restore();
+
+    if(overlay.__tex) overlay.__tex.needsUpdate = true;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  /* ---------- Ken Burns suave ---------- */
+  function kenBurns(){
+    const mesh=vPlane.getObject3D('mesh'); if(!mesh||!mesh.material||!mesh.material.map){ requestAnimationFrame(kenBurns); return; }
+    const t=mesh.material.map;
+    const rx=t.repeat.x, ry=t.repeat.y, ox=t.offset.x, oy=t.offset.y;
+    const dx=(Math.sin(performance.now()/6500)*0.015)*rx, dy=(Math.cos(performance.now()/9500)*0.015)*ry;
+    t.offset.set(clamp(ox+dx,0,1-rx), clamp(oy+dy,0,1-ry)); t.needsUpdate=true;
+    requestAnimationFrame(kenBurns);
+  }
+  requestAnimationFrame(kenBurns);
+
+  /* ---------- Estados / UI ---------- */
+  const btnStart=document.getElementById('btnStart');
+  btnStart.onclick=async()=>{
+    try{
+      btnStart.disabled=true; log('Pidiendo cámara…');
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+      s.getTracks().forEach(t=>t.stop());
+      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
+      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
+      btnStart.textContent='Cámara lista';
+    }catch(e){
+      btnStart.disabled=false;
+      log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+    }
+  };
+
+  anchor.addEventListener('targetFound', async ()=>{
+    try{
+      // reproduce el vídeo y revisa fallback a los 200ms
+      await v1.play();
+      setTimeout(checkBlackFallback, 200);
+    }catch{}
+    // audio autoplay
+    setupAudio();
+    try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
+    document.getElementById('btnAudio').disabled=false;
+    log('Target FOUND');
+  });
+
+  anchor.addEventListener('targetLost', ()=>{
+    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
+  });
+
+  // primer gesto (iOS ayuda a media)
+  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
