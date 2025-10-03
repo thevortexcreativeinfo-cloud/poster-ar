@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás */
+  /* Cámara detrás (cover) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
   /* WebGL delante */
@@ -41,7 +41,9 @@
   </a-assets>
 
   <a-camera id="cam" look-controls="enabled:false">
-    <a-entity cursor="rayOrigin: mouse" raycaster="objects: .ui3d; far: 3"></a-entity>
+    <!-- ampliamos el raycaster para corazones y el plano de arrastre -->
+    <a-entity id="mouseRay" cursor="rayOrigin: mouse"
+              raycaster="objects: .ui3d,.heart,.dragplane; far: 4"></a-entity>
   </a-camera>
 
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
@@ -61,6 +63,7 @@
     });
   }
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
 
   /* ---------- Cargar JSON ---------- */
   const cfgUrl = qs.get('cfg');
@@ -91,14 +94,14 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Póster: fondo blanco (detrás de todo) ---------- */
+  /* ---------- Póster: fondo blanco ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- Marco muy fino (no tapa) ---------- */
+  /* ---------- Marco muy fino ---------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
   const frameThin=document.createElement('a-plane');
@@ -107,19 +110,18 @@
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- Plano del VÍDEO (encima de todo lo demás) ---------- */
+  /* ---------- Plano del VÍDEO ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || ''; // p.ej: https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4
+  v1.src = CFG.video || '';
   v1.load();
 
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn);
   vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
-  // PRIMERA OPCIÓN: usar material src:#v1 (como cuando te iba)
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
@@ -134,7 +136,7 @@
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
   v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // FALLBACK AUTOMÁTICO a THREE.VideoTexture si el video queda negro
+  // Fallback a THREE.VideoTexture si quedara negro
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -146,22 +148,20 @@
     forcedVideoTex=true;
     log('Fallback a THREE.VideoTexture');
   }
-  // chequeo tras intentar reproducir
   function checkBlackFallback(){
     const mesh=vPlane.getObject3D('mesh');
     const map=mesh?.material?.map;
-    // si no hay ancho de vídeo o el mapa no existe, forzamos fallback
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   }
 
-  /* ---------- Canvas overlay: textos + barra + animación inferior ---------- */
+  /* ---------- Canvas overlay (tu UI existente) ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
   const overlay=document.createElement('a-plane');
   overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');   // siempre por debajo del vídeo
+  overlay.setAttribute('position','0 0 0.0');
   overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
   root.appendChild(overlay); setRO(overlay, 3, false, false);
   overlay.addEventListener('loaded', ()=>{
@@ -194,7 +194,7 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Barra musical mejorada + cinta inferior ---------- */
+  /* ---------- Barra musical + cinta inferior (igual que tenías) ---------- */
   const BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
@@ -240,7 +240,7 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // Espectro doble (suave con peaks y barrido)
+    // Espectro doble
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
@@ -288,14 +288,14 @@
       }
     }
 
-    /* --- Cinta inferior animada (limpia y sutil) --- */
+    // Cinta inferior suave (igual que tenías)
     const bandH = Math.round(50*Cw/2048);
-    const yBand = Math.round((PH*0.88)*Ch/PH); // zona baja del póster
+    const yBand = Math.round((PH*0.88)*Ch/PH);
     const g2 = ctx.createLinearGradient(0,yBand,0,yBand+bandH);
     g2.addColorStop(0,'rgba(0,0,0,0.06)');
     g2.addColorStop(1,'rgba(0,0,0,0)');
     ctx.fillStyle=g2; ctx.fillRect(0,yBand,Cw,bandH);
-    // ondas suaves
+
     ctx.save();
     ctx.globalAlpha = 0.65;
     ctx.beginPath();
@@ -328,7 +328,97 @@
   }
   requestAnimationFrame(kenBurns);
 
-  /* ---------- Estados / UI ---------- */
+  /* ---------- CORAZONES (tap para crear, drag + física en todo el póster) ---------- */
+  const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+  const hearts=[]; // {el,x,y,vx,vy}
+  const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
+
+  // plano invisible para recibir taps y calcular coordenadas locales
+  const dragPlane=document.createElement('a-plane');
+  dragPlane.classList.add('dragplane','ui3d');
+  dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
+  dragPlane.setAttribute('position','0 0 0.07');
+  dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
+
+  function spawnHeart(x,y){
+    const xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
+    const yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
+    const h = document.createElement('a-image');
+    h.setAttribute('src', HEART_SVG);
+    h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
+    h.setAttribute('position', `${xx} ${yy} 0.06`);
+    h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
+    h.classList.add('ui3d','heart');
+    root.appendChild(h); setRO(h, 140, false, false);
+    hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
+    if(hearts.length>28){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
+  }
+
+  // tap para crear corazón donde toques
+  dragPlane.addEventListener('click', ()=>{
+    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
+    if(!hit) return;
+    const p=hit.point.clone(); root.object3D.worldToLocal(p);
+    spawnHeart(clamp(p.x,area.x1,area.x2), clamp(p.y,area.y1,area.y2));
+  });
+
+  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+
+  function pointerLocal(){
+    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
+    if(!hit) return null;
+    const p=hit.point.clone(); root.object3D.worldToLocal(p);
+    return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
+  }
+  function heartFromEl(el){ for(let i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
+
+  scene.addEventListener('pointerdown', ()=>{
+    const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
+    let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; } }
+    if(!hit) return;
+    const h=heartFromEl(hit.object.el); if(!h) return;
+    const p=pointerLocal(); if(!p) return;
+    dragging=h; dragOffset={x:h.x-p.x, y:h.y-p.y};
+    lastPointer=p; lastTime=performance.now();
+  });
+  scene.addEventListener('pointerup',   ()=>{ dragging=null; });
+  scene.addEventListener('pointerleave',()=>{ dragging=null; });
+
+  (function heartsTick(){
+    const dt=1/60, g=-0.4, damp=0.60; // gravedad ligera + rebote
+    const now=performance.now();
+    const p=pointerLocal();
+
+    if(dragging && p){
+      const nx=clamp(p.x+dragOffset.x, area.x1, area.x2);
+      const ny=clamp(p.y+dragOffset.y, area.y1, area.y2);
+      if(lastPointer){
+        const dtms=Math.max(16, now-lastTime);
+        dragging.vx=(nx-dragging.x)/(dtms/1000);
+        dragging.vy=(ny-dragging.y)/(dtms/1000);
+      }
+      dragging.x=nx; dragging.y=ny;
+      lastPointer=p; lastTime=now;
+    }
+
+    for(let i=0;i<hearts.length;i++){
+      const o=hearts[i];
+      if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
+      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+      o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
+      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
+    }
+
+    requestAnimationFrame(heartsTick);
+  })();
+
+  /* ---------- Estados / UI (igual que tu base) ---------- */
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
@@ -346,11 +436,9 @@
 
   anchor.addEventListener('targetFound', async ()=>{
     try{
-      // reproduce el vídeo y revisa fallback a los 200ms
       await v1.play();
       setTimeout(checkBlackFallback, 200);
     }catch{}
-    // audio autoplay
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
@@ -361,7 +449,7 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // primer gesto (iOS ayuda a media)
+  // primer gesto (iOS)
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
