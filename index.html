@@ -8,9 +8,11 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Sólo el vídeo de MindAR (cámara) como fondo */
-  #mindar-video{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* Solo el vídeo de MindAR como fondo (cubrimos dos ids posibles) */
+  #mindar-video, #mindar-image-video{
+    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+    object-fit:cover!important;z-index:0!important;background:#000!important
+  }
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
@@ -22,10 +24,10 @@
 </head>
 <body>
 <div class="ui">
-  <button id="btnStart" class="btn" type="button">📷 Abrir cámara</button>
+  <button id="btnStart" class="btn" type="button" disabled>⏳ Preparando…</button>
   <button id="btnAudio" class="btn" type="button" disabled>▶️ Audio</button>
 </div>
-<div id="dbg" class="dbg">Listo…</div>
+<div id="dbg" class="dbg">Cargando…</div>
 
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
@@ -35,7 +37,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- vídeo de contenido (no de cámara). Se asigna por JS -->
+    <!-- Vídeo de CONTENIDO (no la cámara). Se asigna por JS -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -50,14 +52,14 @@
 (function(){
   'use strict';
 
-  /* ---------- util ---------- */
+  /* ---------- utils ---------- */
   var qs = new URLSearchParams(location.search);
   function log(){
     var msg=[].slice.call(arguments).join(' ');
     var el=document.getElementById('dbg');
     el.textContent=msg+'\n'+new Date().toLocaleTimeString();
     el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200);
-    if(console && console.log) console.log('[AR]', msg);
+    console.log('[AR]', msg);
   }
   function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
   function getRay(){ var r=document.getElementById('mouseRay'); return r && r.components ? r.components.raycaster : null; }
@@ -68,6 +70,7 @@
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+  function mindarVideoEl(){ return document.getElementById('mindar-video') || document.getElementById('mindar-image-video'); }
 
   /* ---------- cargar cfg ---------- */
   var cfgUrl = qs.get('cfg');
@@ -80,15 +83,14 @@
   function init(CFG){
     var scene = document.getElementById('scene');
 
-    /* MindAR: set conf */
+    /* MindAR conf */
     scene.setAttribute('mindar-image',
       'imageTargetSrc:'+CFG.target+'; uiLoading: true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
-    /* dims y helpers para slots */
+    /* layout */
     var PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
     function px2(x,y,w,h){ return {wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW}; }
 
-    /* root anchor */
     var anchor=document.getElementById('anchor');
     var root=document.createElement('a-entity'); anchor.appendChild(root);
     var cal=(CFG.cal||{dx:0,dy:0,scale:1,rot:0});
@@ -96,7 +98,7 @@
     root.setAttribute('scale', cal.scale+' '+cal.scale+' 1');
     root.setAttribute('rotation', '0 0 '+cal.rot);
 
-    /* fondo papel */
+    /* papel */
     var paper=document.createElement('a-plane');
     paper.setAttribute('width',1); paper.setAttribute('height',H);
     paper.setAttribute('position','0 0 -0.02');
@@ -105,8 +107,8 @@
 
     /* marco animado */
     var vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-    var glow1 = (CFG.colors&&CFG.colors.wave1) ? CFG.colors.wave1 : '#13d77a';
-    var glow2 = (CFG.colors&&CFG.colors.wave2) ? CFG.colors.wave2 : '#ffd54a';
+    var glow1=(CFG.colors&&CFG.colors.wave1)||'#13d77a';
+    var glow2=(CFG.colors&&CFG.colors.wave2)||'#ffd54a';
 
     var frame=document.createElement('a-plane');
     frame.setAttribute('width',u.wn*1.018); frame.setAttribute('height',u.hn*1.018);
@@ -127,7 +129,7 @@
         var p=document.createElement('a-plane');
         p.setAttribute('width',s.w); p.setAttribute('height',s.h);
         p.setAttribute('position',s.x+' '+s.y+' '+z);
-        var col = (i%2===0)? glow1 : glow2;
+        var col=(i%2===0)?glow1:glow2;
         p.setAttribute('material','shader:standard; color:'+col+'; emissive:'+col+'; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95');
         p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.20; to:0.46; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
         root.appendChild(p); setRO(p, 20, false, false);
@@ -148,7 +150,7 @@
       runner(u.cx+u.wn/2, u.cy-u.hn/2-0.012, u.cx-u.wn/2, u.cy-u.hn/2-0.012, glow2, 300);
     })();
 
-    /* vídeo de contenido */
+    /* vídeo de CONTENIDO */
     var v1=document.getElementById('v1');
     v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
     v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
@@ -280,12 +282,10 @@
         for(var i=0;i<BARS;i++){
           var bandIndex = arr ? Math.min(arr.length-1, 2+i) : 0;
           var raw;
-          if (arr) {
-            raw = arr[bandIndex] / 255;
-          } else {
-            var fake = Math.sin((t/420) + (i*0.35));
-            fake = Math.abs(fake);
-            raw  = 0.25 + 0.75 * fake;
+          if(arr){ raw = arr[bandIndex]/255; }
+          else{
+            var fake = Math.sin((t/420)+(i*0.35)); fake = Math.abs(fake);
+            raw = 0.25 + 0.75*fake;
           }
 
           levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.010);
@@ -321,9 +321,9 @@
     }
     requestAnimationFrame(draw);
 
-    /* corazones (tap para crear, drag + física) */
+    /* corazones */
     var HEART_SVG='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-    var hearts=[], area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
+    var hearts=[], area={x1:-0.5+0.03,x2:0.5-0.03,y1:-H/2+0.03,y2:H/2-0.03};
 
     var dragPlane=document.createElement('a-plane');
     dragPlane.classList.add('dragplane','ui3d');
@@ -333,69 +333,55 @@
     root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
 
     function spawnHeart(x,y){
-      var xx = (typeof x==='number')? x : (area.x1+area.x2)/2;
-      var yy = (typeof y==='number')? y : (area.y1+area.y2)/2;
-      var h = document.createElement('a-image');
-      h.setAttribute('src', HEART_SVG);
-      h.setAttribute('width', 0.10); h.setAttribute('height', 0.10);
-      h.setAttribute('position', xx+' '+yy+' 0.06');
-      h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
+      var xx=(typeof x==='number')?x:(area.x1+area.x2)/2;
+      var yy=(typeof y==='number')?y:(area.y1+area.y2)/2;
+      var h=document.createElement('a-image');
+      h.setAttribute('src',HEART_SVG);
+      h.setAttribute('width',0.10); h.setAttribute('height',0.10);
+      h.setAttribute('position',xx+' '+yy+' 0.06');
+      h.setAttribute('material','transparent:true; alphaTest:0.01; side:double');
       h.classList.add('ui3d','heart');
-      root.appendChild(h); setRO(h, 140, false, false);
-      hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3});
-      if(hearts.length>28){ var old=hearts.shift(); if(old && old.el) old.el.remove(); }
+      root.appendChild(h); setRO(h,140,false,false);
+      hearts.push({el:h,x:xx,y:yy,vx:(Math.random()-0.5)*0.3,vy:(Math.random()-0.5)*0.3});
+      if(hearts.length>28){ var old=hearts.shift(); if(old&&old.el) old.el.remove(); }
     }
     dragPlane.addEventListener('click', function(){
       var ray=getRay(); var ints=ray && ray.intersections ? ray.intersections : [];
-      var hit=null;
-      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el === dragPlane){ hit=ints[i]; break; } }
-      if(!hit) return;
-      var p=hit.point.clone(); root.object3D.worldToLocal(p);
-      spawnHeart(clamp(p.x, area.x1, area.x2), clamp(p.y, area.y1, area.y2));
+      var hit=null; for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
+      if(!hit) return; var p=hit.point.clone(); root.object3D.worldToLocal(p);
+      spawnHeart(clamp(p.x,area.x1,area.x2), clamp(p.y,area.y1,area.y2));
     });
 
     var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
     function pointerLocal(){
       var ray=getRay(); var ints=ray && ray.intersections ? ray.intersections : [];
-      var hit=null;
-      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el === dragPlane){ hit=ints[i]; break; } }
-      if(!hit) return null;
-      var p=hit.point.clone(); root.object3D.worldToLocal(p);
-      return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
+      var hit=null; for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
+      if(!hit) return null; var p=hit.point.clone(); root.object3D.worldToLocal(p);
+      return {x:clamp(p.x,area.x1,area.x2), y:clamp(p.y,area.y1,area.y2)};
     }
     function heartFromEl(el){ for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
     scene.addEventListener('pointerdown', function(){
       var ray=getRay(); var ints=ray && ray.intersections ? ray.intersections : [];
       var hit=null;
-      for(var i=0;i<ints.length;i++){
-        if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; }
-      }
+      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; } }
       if(!hit) return;
       var h=heartFromEl(hit.object.el); if(!h) return;
       var p=pointerLocal(); if(!p) return;
-      dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
-      lastPointer = p; lastTime = performance.now();
+      dragging=h; dragOffset={x:h.x-p.x,y:h.y-p.y}; lastPointer=p; lastTime=performance.now();
     });
-    scene.addEventListener('pointerup',   function(){ dragging=null; });
+    scene.addEventListener('pointerup',function(){ dragging=null; });
     scene.addEventListener('pointerleave',function(){ dragging=null; });
     (function heartsTick(){
-      var dt=1/60, g=-0.4, damp=0.60;
-      var now=performance.now();
-      var p=pointerLocal();
+      var dt=1/60, g=-0.4, damp=0.60, now=performance.now(), p=pointerLocal();
       if(dragging && p){
-        var nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
-        var ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-        if(lastPointer){
-          var dtms = Math.max(16, now-lastTime);
-          dragging.vx = (nx - dragging.x) / (dtms/1000);
-          dragging.vy = (ny - dragging.y) / (dtms/1000);
-        }
-        dragging.x = nx; dragging.y = ny;
-        lastPointer = p; lastTime = now;
+        var nx=clamp(p.x+dragOffset.x,area.x1,area.x2);
+        var ny=clamp(p.y+dragOffset.y,area.y1,area.y2);
+        if(lastPointer){ var dtms=Math.max(16,now-lastTime); dragging.vx=(nx-dragging.x)/(dtms/1000); dragging.vy=(ny-dragging.y)/(dtms/1000); }
+        dragging.x=nx; dragging.y=ny; lastPointer=p; lastTime=now;
       }
       for(var i=0;i<hearts.length;i++){
         var o=hearts[i];
-        if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
+        if(o!==dragging){ o.vy+=g*dt; o.x+=o.vx*dt; o.y+=o.vy*dt; }
         if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
         if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
         if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
@@ -406,102 +392,67 @@
       requestAnimationFrame(heartsTick);
     })();
 
-    /* ---------- Arranque cámara/MindAR robusto + debug ---------- */
-    function waitSceneLoaded(){
-      return new Promise(function(res){ if(scene.hasLoaded) res(); else scene.addEventListener('loaded', function(){res();}, {once:true}); });
-    }
-    function waitMindARReady(){
-      return new Promise(function(res){
-        if(scene.components['mindar-image']) return res();
-        function onInit(e){ if(e.detail && e.detail.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } }
-        scene.addEventListener('componentinitialized', onInit);
-      });
-    }
-    function startMindAR(){
-      return new Promise(function(res,rej){
-        var comp=scene.components['mindar-image'];
-        var sys =scene.systems['mindar-image-system'];
-        var p=null;
-        if(comp && comp.start) p=comp.start();
-        else if(sys && sys.start) p=sys.start();
-        else return rej(new Error('No MindAR start method'));
-        Promise.resolve(p).then(res).catch(rej);
-      });
-    }
-    function findMindARVideo(){ return document.getElementById('mindar-video'); }
-    function styleMindARVideo(){
-      var mv=findMindARVideo();
-      if(!mv) return;
-      mv.setAttribute('playsinline','true');
-      mv.setAttribute('webkit-playsinline','true');
-      mv.muted = true; // iOS
-      // CSS se aplica por id en <style>, esto asegura cover/z-index
-    }
-    function waitMindARVideo(timeoutMs){
-      return new Promise(function(res){
-        var t0=performance.now(), int=setInterval(function(){
-          var v=findMindARVideo();
-          if(v){ clearInterval(int); res(v); }
-          else if(performance.now()-t0>timeoutMs){ clearInterval(int); res(null); }
-        },50);
-      });
-    }
-    function bootAR(){
-      return navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false})
-      .then(function(s){ if(s && s.getTracks){ s.getTracks().forEach(function(t){ t.stop(); }); }})
-      .catch(function(e){ log('getUserMedia dio', e && e.name); })
-      .then(waitSceneLoaded)
-      .then(waitMindARReady)
-      .then(startMindAR)
-      .then(function(){
-        document.getElementById('btnStart').textContent='Cámara lista';
-        log('Cámara iniciada, esperando video...');
-        return waitMindARVideo(3000);
-      })
-      .then(function(mv){
-        styleMindARVideo();
-        if(mv){
-          var dbg=function(){ log('mindar-video', 'readyState='+mv.readyState, 'paused='+(!!mv.paused), 'size='+mv.videoWidth+'x'+mv.videoHeight); };
-          mv.addEventListener('loadeddata', dbg);
-          mv.addEventListener('playing', dbg);
-          mv.addEventListener('pause', dbg);
-          // si queda pausado, primer gesto lo fuerza
-          if(mv.paused){
-            var kick=function(){ mv.play().catch(function(){}); window.removeEventListener('pointerdown', kick, {passive:true}); };
-            window.addEventListener('pointerdown', kick, {once:true,passive:true});
-          }
-        } else {
-          log('No encontré #mindar-video (pero MindAR está activo)');
-        }
-      });
+    /* ---------- botón cámara: garantiza gesto ---------- */
+    var btnStart=document.getElementById('btnStart');
+    var readyScene=false, readyMindAR=false;
+
+    scene.addEventListener('loaded', function(){ readyScene=true; armButton(); });
+    scene.addEventListener('componentinitialized', function(e){
+      if(e.detail && e.detail.name==='mindar-image'){ readyMindAR=true; armButton(); }
+    });
+
+    function armButton(){
+      if(readyScene && readyMindAR){
+        btnStart.disabled=false;
+        btnStart.textContent='📷 Abrir cámara';
+      }
     }
 
-    var btnStart=document.getElementById('btnStart');
     btnStart.addEventListener('click', function(){
+      // IMPORTANTE: arrancar dentro del MISMO gesto
       btnStart.disabled=true;
-      bootAR().catch(function(e){
+      log('Arrancando MindAR…');
+
+      var comp=scene.components['mindar-image'];
+      var sys =scene.systems['mindar-image-system'];
+      var p = comp && comp.start ? comp.start() : (sys && sys.start ? sys.start() : Promise.reject(new Error('No MindAR start')));
+      Promise.resolve(p).then(function(){
+        btnStart.textContent='Cámara lista';
+        var mv=mindarVideoEl();
+        if(mv){
+          mv.setAttribute('playsinline','true');
+          mv.setAttribute('webkit-playsinline','true');
+          mv.muted=true;
+          if(mv.paused){ mv.play().catch(function(){}); }
+          log('Cámara OK. paused='+mv.paused+', size='+mv.videoWidth+'x'+mv.videoHeight);
+        }else{
+          log('MindAR activo pero no veo el video aún…');
+        }
+      }).catch(function(e){
         btnStart.disabled=false;
-        log('No se pudo iniciar cámara ('+(e && e.name || '')+' '+(e && e.message || e)+')');
+        btnStart.textContent='📷 Abrir cámara';
+        log('Fallo al iniciar MindAR:', e && e.name, e && e.message || e);
       });
     });
 
-    /* eventos de target */
+    /* target events */
+    var btnAudio=document.getElementById('btnAudio');
+    var audioEnabled=false;
     anchor.addEventListener('targetFound', function(){
       v1.play().catch(function(){});
-      setupAudio();
-      if(acx && acx.state==='suspended'){ acx.resume().then(function(){ audio && audio.play().catch(function(){}); }); }
-      document.getElementById('btnAudio').disabled=false;
+      if(!audioEnabled){ setupAudio(); audioEnabled=true; }
+      var mv=mindarVideoEl(); if(mv && mv.paused){ mv.play().catch(function(){}); }
+      btnAudio.disabled=false;
       log('Target FOUND');
     });
     anchor.addEventListener('targetLost', function(){
       v1.pause(); if(audio) audio.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
     });
 
-    /* en iOS, primer gesto ayuda a video de cámara si quedó pausado */
+    /* gesto de seguridad (si algo queda pausado) */
     window.addEventListener('pointerdown', function(){
-      var mv=findMindARVideo(); if(mv && mv.paused) mv.play().catch(function(){});
-      var sys=scene.systems['mindar-image-system']; if(!sys || !sys.active) btnStart.click();
-    }, {once:false,passive:true});
+      var mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(function(){});
+    }, {passive:true});
   }
 })();
 </script>
