@@ -8,12 +8,9 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;z-index:0!important;background:#000!important}
-  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
@@ -34,7 +31,6 @@
   mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
-  <!-- SIN a-assets para el video (evita warning de src vacío) -->
   <a-camera id="cam" look-controls="enabled:false">
     <a-entity id="mouseRay" cursor="rayOrigin: mouse" raycaster="objects: .ui3d,.heart,.dragplane; far: 3"></a-entity>
   </a-camera>
@@ -42,12 +38,12 @@
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
-<!-- El <video> de la textura va FUERA de <a-scene> y con src por JS -->
+<!-- El video fuente va fuera de <a-scene> y con src por JS -->
 <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" style="display:none"></video>
 
 <script>
 (function(){
-  /* ===== Polyfill getUserMedia: si no hay trasera, cae a cualquier cámara ===== */
+  /* ===== Polyfill getUserMedia: intenta trasera y cae a la disponible ===== */
   (function(){
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     var orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -61,7 +57,7 @@
     };
   })();
 
-  /* ===== Utilidades ===== */
+  /* ===== Utils ===== */
   var qs = new URLSearchParams(location.search);
   function log(m){ var el=document.getElementById('dbg'); el.textContent=m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200); console.log('[AR]',m); }
   function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
@@ -77,14 +73,14 @@
   /* ===== Cargar JSON ===== */
   var cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
-  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){return r.json();}).then(init).catch(function(){ log('❗ No pude cargar el JSON'); });
+  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){return r.json();}).then(init).catch(function(e){ log('❗ No pude cargar el JSON'); });
 
   function init(CFG){
     var scene = document.getElementById('scene');
 
     /* Cámara del fondo en cover */
     new MutationObserver(function(){
-      var vids = document.querySelectorAll('video');
+      var vids=document.querySelectorAll('video');
       for(var i=0;i<vids.length;i++){
         var v=vids[i];
         if(v.srcObject instanceof MediaStream){
@@ -102,7 +98,7 @@
 
     var anchor=document.getElementById('anchor');
     var root=document.createElement('a-entity'); anchor.appendChild(root);
-    var cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
+    var cal=(CFG.cal||{dx:0,dy:0,scale:1,rot:0});
     root.setAttribute('position', (cal.dx/PW)+' '+(-cal.dy/PW)+' 0');
     root.setAttribute('scale', cal.scale+' '+cal.scale+' 1');
     root.setAttribute('rotation', '0 0 '+cal.rot);
@@ -114,10 +110,10 @@
     paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
     root.appendChild(paper); setRO(paper, 1, false, false);
 
-    /* Marco animado */
+    /* Marco animado bonito (no tapa el vídeo) */
     var vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-    var glow1 = (CFG.colors&&CFG.colors.wave1) ? CFG.colors.wave1 : '#13d77a';
-    var glow2 = (CFG.colors&&CFG.colors.wave2) ? CFG.colors.wave2 : '#ffd54a';
+    var glow1 = (CFG.colors&&CFG.colors.wave1)?CFG.colors.wave1:'#13d77a';
+    var glow2 = (CFG.colors&&CFG.colors.wave2)?CFG.colors.wave2:'#ffd54a';
 
     var frame=document.createElement('a-plane');
     frame.setAttribute('width',u.wn*1.012); frame.setAttribute('height',u.hn*1.012);
@@ -125,7 +121,7 @@
     frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
     root.appendChild(frame); setRO(frame, 5, false, false);
 
-    (function stripsGlow(){
+    (function(){
       var t=0.004, z=0.018;
       var strips=[
         {w:u.wn*1.01,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
@@ -138,14 +134,14 @@
         var p=document.createElement('a-plane');
         p.setAttribute('width',s.w); p.setAttribute('height',s.h);
         p.setAttribute('position',s.x+' '+s.y+' '+z);
-        var col = i%2 ? glow2 : glow1;
+        var col=(i%2)?glow2:glow1;
         p.setAttribute('material','shader:standard; color:'+col+'; emissive:'+col+'; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95');
         p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
         root.appendChild(p); setRO(p, 20, false, false);
       }
     })();
 
-    /* Vídeo estable y centrado */
+    /* Vídeo estable y centrado (cover) */
     var v1=document.getElementById('v1');
     v1.crossOrigin='anonymous';
     v1.muted=true; v1.playsInline=true;
@@ -164,13 +160,14 @@
       if(!map || !v1.videoWidth) return;
       var vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
       var rx=1,ry=1,ox=0,oy=0;
-      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; }
+      else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
       map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
     }
     vPlane.addEventListener('materialtextureloaded', function(e){ coverFromMap(e.detail.texture); });
     v1.addEventListener('loadedmetadata', function(){
-      var mesh=vPlane.getObject3D('mesh');
-      if(mesh && mesh.material && mesh.material.map) coverFromMap(mesh.material.map);
+      var m=vPlane.getObject3D('mesh');
+      if(m && m.material && m.material.map) coverFromMap(m.material.map);
     });
 
     /* Canvas overlay (textos + barra musical) */
@@ -204,7 +201,6 @@
 
     var btnAudio=document.getElementById('btnAudio');
     var audio=null, acx=null, analyser=null;
-
     function setupAudio(){
       if(audio) return;
       audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -217,21 +213,20 @@
       audio.addEventListener('play', function(){ btnAudio.textContent='⏸ Audio'; });
       audio.addEventListener('pause',function(){ btnAudio.textContent='▶️ Audio'; });
     }
-    async function toggleAudio(){
+    function toggleAudio(){
       setupAudio();
-      try{
-        if(audio.paused){
-          if(acx && acx.state==='suspended'){ await acx.resume(); }
-          await audio.play();
-        } else {
-          audio.pause();
-        }
-      }catch(e){}
+      (async function(){
+        try{
+          if(audio.paused){ if(acx && acx.state==='suspended'){ await acx.resume(); } await audio.play(); }
+          else { audio.pause(); }
+        }catch(e){}
+      })();
     }
     btnAudio.addEventListener('click', function(){ toggleAudio(); });
 
     var BARS=48, waveH=Math.round(36*Cw/2048), gap=Math.round(24*Cw/2048);
-    var levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
+    var levels=new Array(BARS), peaks=new Array(BARS);
+    for(var i0=0;i0<BARS;i0++){ levels[i0]=0; peaks[i0]=0; }
     function mmss(t){ if(!isFinite(t)||t<0) t=0; var m=Math.floor(t/60), s=Math.floor(t%60); return m+':'+String(s).padStart(2,'0'); }
 
     function draw(){
@@ -242,14 +237,14 @@
           tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
       ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.font='800 '+titlePx+'px system-ui,Segoe UI,Roboto';
-      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-      ctx.fillStyle=(CFG.colors&&CFG.colors.title)||'#000'; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText((CFG.title||''), tx+tw/2+2, ty+th/2+2);
+      ctx.fillStyle=(CFG.colors&&CFG.colors.title)||'#000'; ctx.fillText((CFG.title||''), tx+tw/2, ty+th/2);
 
       var ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
           aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
       ctx.font='600 '+artistPx+'px system-ui,Segoe UI,Roboto';
-      ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-      ctx.fillStyle=(CFG.colors&&CFG.colors.artist)||'#000'; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+      ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText((CFG.artist||''), ax+aw/2+1.8, ay+ah/2+1.8);
+      ctx.fillStyle=(CFG.colors&&CFG.colors.artist)||'#000'; ctx.fillText((CFG.artist||''), ax+aw/2, ay+ah/2);
 
       // Barra base + progreso
       var pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
@@ -298,11 +293,13 @@
           var glowAmt = Math.max(0, 1 - dist/120);
 
           ctx.fillStyle = col;
-          if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+          if(pass===0) ctx.fillRect(x, baseY-h, w, h);
+          else ctx.fillRect(x, baseY, w, h);
 
           // peak hold
           ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
-          if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
+          if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
+          else ctx.fillRect(x, baseY+peakY, w, 2);
           ctx.globalAlpha = 1;
 
           if(glowAmt>0){
@@ -310,7 +307,8 @@
             g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glowAmt)+')');
             g.addColorStop(1, 'rgba(255,255,255,0)');
             ctx.fillStyle = g;
-            if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+            if(pass===0) ctx.fillRect(x, baseY-h, w, h);
+            else ctx.fillRect(x, baseY, w, h);
           }
         }
       }
@@ -320,10 +318,9 @@
     }
     requestAnimationFrame(draw);
 
-    /* Corazones con física + drag */
+    /* Corazones con física + drag (zona inferior) */
     var HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-    var hearts=[]; // {el,x,y,vx,vy}
-    var area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
+    var hearts=[], area = { x1:-0.5+0.06, x2:0.5-0.06, y1:-H/2+0.10, y2:-H/2+0.55 };
 
     var dragPlane=document.createElement('a-plane');
     dragPlane.classList.add('dragplane');
@@ -349,20 +346,29 @@
     var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
 
     function pointerLocal(){
-      var ray = getRay(); var ints = ray && ray.intersections ? ray.intersections : [];
-      var hit = null;
-      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('dragplane')){ hit=ints[i]; break; } }
+      var ray = getRay(); var ints = (ray && ray.intersections) ? ray.intersections : [];
+      var hit=null;
+      for(var i=0;i<ints.length;i++){
+        var it=ints[i];
+        if(it.object && it.object.el && it.object.el.classList.contains('dragplane')){ hit=it; break; }
+      }
       if(!hit) return null;
       var p = hit.point.clone();
       root.object3D.worldToLocal(p);
       return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
     }
-    function heartFromEl(el){ for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
+    function heartFromEl(el){
+      for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; }
+      return null;
+    }
 
     scene.addEventListener('pointerdown', function(){
-      var ray = getRay(); var ints = ray && ray.intersections ? ray.intersections : [];
-      var hit = null;
-      for(var i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el && ints[i].object.el.classList.contains('heart')){ hit=ints[i]; break; } }
+      var ray = getRay(); var ints = (ray && ray.intersections) ? ray.intersections : [];
+      var hit=null;
+      for(var i=0;i<ints.length;i++){
+        var it=ints[i];
+        if(it.object && it.object.el && it.object.el.classList.contains('heart')){ hit=it; break; }
+      }
       if(!hit) return;
       var h = heartFromEl(hit.object.el); if(!h) return;
       var p = pointerLocal(); if(!p) return;
@@ -412,7 +418,12 @@
     function waitMindARReady(){
       return new Promise(function(res){
         if(scene.components['mindar-image']) return res();
-        function onInit(e){ if(e.detail && e.detail.name==='mindar-image'){ scene.removeEventListener('componentinitialized', onInit); res(); } }
+        function onInit(e){
+          if(e.detail && e.detail.name==='mindar-image'){
+            scene.removeEventListener('componentinitialized', onInit);
+            res();
+          }
+        }
         scene.addEventListener('componentinitialized', onInit);
       });
     }
@@ -426,7 +437,7 @@
     async function bootAR(){
       try{
         var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
-        s.getTracks().forEach(function(t){ t.stop(); });
+        var tracks=s.getTracks(); for(var i=0;i<tracks.length;i++){ tracks[i].stop(); }
       }catch(e){}
       await waitSceneLoaded();
       await waitMindARReady();
@@ -444,7 +455,7 @@
       });
     });
 
-    // Arranque también en primer gesto (iOS)
+    // Arranque también en el primer gesto (iOS)
     window.addEventListener('pointerdown', function(){
       var sys = scene.systems['mindar-image-system'];
       if(!sys || !sys.active) btnStart.click();
