@@ -8,13 +8,10 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara del móvil detrás (fullscreen cover) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
-  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -43,402 +40,435 @@
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
-<!-- Vídeo fuera de a-assets para evitar warnings de preload -->
+<!-- Vídeo fuera de <a-assets> para evitar warnings de preload; lo cargamos por JS -->
 <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" style="display:none"></video>
 
 <script>
-(async function(){
-  const qs = new URLSearchParams(location.search);
-  const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  const getRay = ()=> document.getElementById('mouseRay')?.components?.raycaster;
+(function(){
+  'use strict';
 
-  /* ---------- Cargar JSON ---------- */
-  const cfgUrl = qs.get('cfg');
-  if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
-  let CFG;
-  try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
-  catch(e){ log('❗ No pude cargar el JSON de cliente'); return; }
-
-  /* ---------- MindAR ---------- */
-  const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
-
-  // WebCam cover detrás
-  new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
-    if(v.srcObject instanceof MediaStream){
-      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
-    }
-  });}).observe(document.documentElement,{subtree:true,childList:true});
-
-  const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
-  const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
-
-  const anchor=document.getElementById('anchor');
-  const root=document.createElement('a-entity'); anchor.appendChild(root);
-  const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
-  root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
-  root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
-  root.setAttribute('rotation', `0 0 ${cal.rot}`);
-
-  /* ---------- Fondo del póster ---------- */
-  const paper=document.createElement('a-plane');
-  paper.setAttribute('width',1); paper.setAttribute('height',H);
-  paper.setAttribute('position','0 0 -0.02');
-  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
-  root.appendChild(paper); setRO(paper, 1, false, false);
-
-  /* ---------- Marco mejorado (glow + runners) ---------- */
-  const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-  const glow1 = CFG.colors?.wave1 || '#13d77a';
-  const glow2 = CFG.colors?.wave2 || '#ffd54a';
-
-  const frame=document.createElement('a-plane');
-  frame.setAttribute('width',u.wn*1.018); frame.setAttribute('height',u.hn*1.018);
-  frame.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
-  frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
-  root.appendChild(frame); setRO(frame, 5, false, false);
-
-  // glow perimetral sutil
-  (function stripsGlow(){
-    const t=0.004, z=0.018;
-    const strips=[
-      {w:u.wn*1.02,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
-      {w:u.wn*1.02,h:t,   x:u.cx,           y:u.cy-u.hn/2-t/2},
-      {w:t,       h:u.hn, x:u.cx-u.wn/2-t/2,y:u.cy},
-      {w:t,       h:u.hn, x:u.cx+u.wn/2+t/2,y:u.cy}
-    ];
-    strips.forEach((s,i)=>{
-      const p=document.createElement('a-plane');
-      p.setAttribute('width',s.w); p.setAttribute('height',s.h);
-      p.setAttribute('position',`${s.x} ${s.y} ${z}`);
-      const col = i%2 ? glow2 : glow1;
-      p.setAttribute('material',`shader:standard; color:${col}; emissive:${col}; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95`);
-      p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine`);
-      root.appendChild(p); setRO(p, 20, false, false);
-    });
-  })();
-
-  // runners por los bordes
-  (function runners(){
-    const z=0.019, w=0.02, h=0.006, dur=1800;
-    function runner(x1,y1,x2,y2,color,delay){
-      const r=document.createElement('a-plane');
-      r.setAttribute('width',w); r.setAttribute('height',h);
-      r.setAttribute('position',`${x1} ${y1} ${z}`);
-      r.setAttribute('material',`shader:standard; color:${color}; emissive:${color}; emissiveIntensity:0.9; roughness:1; metalness:0; transparent:true; opacity:1`);
-      r.setAttribute('animation__go',`property:position; to:${x2} ${y2} ${z}; dur:${dur}; dir:alternate; loop:true; easing:easeInOutSine; delay:${delay||0}`);
-      root.appendChild(r); setRO(r, 25, false, false);
-    }
-    runner(u.cx-u.wn/2, u.cy+u.hn/2+0.01, u.cx+u.wn/2, u.cy+u.hn/2+0.01, glow1, 0);
-    runner(u.cx+u.wn/2, u.cy-u.hn/2-0.01, u.cx-u.wn/2, u.cy-u.hn/2-0.01, glow2, 250);
-    runner(u.cx-u.wn/2-0.01, u.cy-u.hn/2, u.cx-u.wn/2-0.01, u.cy+u.hn/2, glow2, 500);
-    runner(u.cx+u.wn/2+0.01, u.cy+u.hn/2, u.cx+u.wn/2+0.01, u.cy-u.hn/2, glow1, 750);
-  })();
-
-  /* ---------- Vídeo centrado (sin desplazamientos) ---------- */
-  const v1=document.getElementById('v1');
-  v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
-  v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || 'https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4';
-  v1.load();
-
-  const vPlane=document.createElement('a-plane');
-  vPlane.setAttribute('width',u.wn);
-  vPlane.setAttribute('height',u.hn);
-  vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
-  vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
-  root.appendChild(vPlane); setRO(vPlane, 100, true, true);
-
-  function coverFromMap(map){
-    if(!map || !v1.videoWidth) return;
-    const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
-    let rx=1,ry=1,ox=0,oy=0;
-    if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
+  // -------- Helpers ----------
+  function log(m){
+    var el=document.getElementById('dbg');
+    el.textContent=m+' · '+new Date().toLocaleTimeString();
+    el.style.opacity=.9; setTimeout(function(){el.style.opacity=.16;},1200);
+    try{ console.log('[AR]',m); }catch(e){}
   }
-  vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
-  v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function getRay(){ var r=document.getElementById('mouseRay'); return (r && r.components) ? r.components.raycaster : null; }
+  function setRO(el, order, depthTest, depthWrite){
+    el.addEventListener('loaded', function(){
+      var mesh = el.getObject3D('mesh'); if(!mesh) return;
+      mesh.renderOrder = order;
+      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
+    });
+  }
 
-  /* ---------- Canvas overlay (textos + barra musical GRANDE) ---------- */
-  const Cw=2048, Ch=Math.round(Cw*H);
-  const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-  const ctx=canvas.getContext('2d');
+  // -------- Cargar JSON ----------
+  var qs = new URLSearchParams(location.search);
+  var cfgUrl = qs.get('cfg');
+  if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
 
-  const overlay=document.createElement('a-plane');
-  overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
-  overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
-  root.appendChild(overlay); setRO(overlay, 3, false, false);
-  overlay.addEventListener('loaded', ()=>{
-    const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
-    const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
+  fetch(cfgUrl,{mode:'cors',cache:'no-store'}).then(function(r){ return r.json(); }).then(function(CFG){
+    start(CFG);
+  }).catch(function(e){
+    log('❗ No pude cargar el JSON');
   });
 
-  const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
-  function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
-  const titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
-  const artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
+  function start(CFG){
+    var scene = document.getElementById('scene');
+    scene.setAttribute('mindar-image',
+      'imageTargetSrc:'+CFG.target+'; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;');
 
-  /* ---------- Audio + analyser ---------- */
-  const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null;
-  function setupAudio(){
-    if(audio) return;
-    audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
-    try{
-      const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC(); analyser=acx.createAnalyser();
-      analyser.fftSize=128; analyser.smoothingTimeConstant=0.88;
-      const src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
-    }catch{}
-    audio.addEventListener('play', ()=>btnAudio.textContent='⏸ Audio');
-    audio.addEventListener('pause',()=>btnAudio.textContent='▶️ Audio');
-  }
-  btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
-
-  // ¡Más grande!
-  const BARS=56;                     // más barras
-  const waveH=Math.round(80*Cw/2048); // más altura
-  const gap=Math.round(34*Cw/2048);   // más separación
-  const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
-  const mmss=t=>{ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; };
-
-  function draw(){
-    ctx.clearRect(0,0,Cw,Ch);
-
-    // Título y artista
-    const tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
-          tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-    ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
-
-    const ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
-          aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
-    ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-    ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
-
-    // Barra base + progreso
-    const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
-          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
-    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
-    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
-
-    let p=0, cur='0:00', dur='0:00';
-    if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
-    const fw=Math.max(2, Math.floor(pbw*p));
-    const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
-    grad.addColorStop(0, glow1); grad.addColorStop(1, glow2);
-    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-
-    const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
-    ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-    ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(cur, pbx, pby - 10);
-    ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
-
-    // Espectro doble grande
-    const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
-    if(arr) analyser.getByteFrequencyData(arr);
-
-    const step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
-    const t = performance.now();
-    const sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
-
-    for(let pass=0; pass<2; pass++){
-      const baseY = (pass===0? yTop : yBot);
-      const col = (pass===0? glow1 : glow2);
-
-      for(let i=0;i<BARS;i++){
-        const bandIndex = Math.min(arr?arr.length-1:0, 2+i);
-        const raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35)))));
-        levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
-        peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
-
-        const x = Math.round(pbx + i*step + step*0.18);
-        const w = Math.max(2, Math.round(step*0.64));
-        const h = Math.max(3, Math.round(levels[i]*waveH));
-        const peakY = Math.max(4, Math.round(peaks[i]*waveH));
-
-        const dist = Math.abs((x+w/2) - sweepX);
-        const glowAmt = Math.max(0, 1 - dist/120);
-
-        ctx.fillStyle = col;
-        if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
-
-        // peak hold
-        ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
-        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
-        ctx.globalAlpha = 1;
-
-        if(glowAmt>0){
-          const g = ctx.createLinearGradient(x,0,x+w,0);
-          g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glowAmt)+')');
-          g.addColorStop(1, 'rgba(255,255,255,0)');
-          ctx.fillStyle = g;
-          if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+    // cámara del móvil detrás (cover)
+    new MutationObserver(function(){
+      var vids=document.querySelectorAll('video');
+      for(var i=0;i<vids.length;i++){
+        var v=vids[i];
+        if(v.srcObject instanceof MediaStream){
+          Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
         }
       }
-    }
+    }).observe(document.documentElement,{subtree:true,childList:true});
 
-    if(overlay.__tex) overlay.__tex.needsUpdate = true;
-    requestAnimationFrame(draw);
-  }
-  requestAnimationFrame(draw);
+    var PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
+    function px2(x,y,w,h){ return {wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW}; }
 
-  /* ---------- Corazones con física + drag (TODO el póster) ---------- */
-  const HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
-  const hearts=[]; // {el,x,y,vx,vy}
-  const area = { x1:-0.5+0.04, x2:0.5-0.04, y1:-H/2+0.04, y2:H/2-0.04 };
+    var anchor=document.getElementById('anchor');
+    var root=document.createElement('a-entity'); anchor.appendChild(root);
+    var cal = (CFG.cal||{dx:0,dy:0,scale:1,rot:0});
+    root.setAttribute('position', (cal.dx/PW)+' '+(-cal.dy/PW)+' 0');
+    root.setAttribute('scale', (cal.scale||1)+' '+(cal.scale||1)+' 1');
+    root.setAttribute('rotation', '0 0 '+(cal.rot||0));
 
-  // plano invisible para TOCAR/DRAG por todo el póster
-  const dragPlane=document.createElement('a-plane');
-  dragPlane.classList.add('dragplane','ui3d');
-  dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
-  dragPlane.setAttribute('position','0 0 0.07');
-  dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
+    // Fondo póster
+    var paper=document.createElement('a-plane');
+    paper.setAttribute('width',1); paper.setAttribute('height',H);
+    paper.setAttribute('position','0 0 -0.02');
+    paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
+    root.appendChild(paper); setRO(paper, 1, false, false);
 
-  function spawnHeart(x,y){
-    const xx = (typeof x==='number')?x: (area.x1+area.x2)/2;
-    const yy = (typeof y==='number')?y: (area.y1+area.y2)/2;
-    const h = document.createElement('a-image');
-    h.setAttribute('src', HEART_SVG);
-    h.setAttribute('width', 0.11); h.setAttribute('height', 0.11);
-    h.setAttribute('position', `${xx} ${yy} 0.06`);
-    h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
-    h.classList.add('ui3d','heart');
-    root.appendChild(h); setRO(h, 140, false, false);
-    hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.25, vy:0.35+Math.random()*0.25});
-    if(hearts.length>36){ const old=hearts.shift(); if(old && old.el) old.el.remove(); }
-  }
+    // Marco animado
+    var vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
+    var glow1 = (CFG.colors&&CFG.colors.wave1)||'#13d77a';
+    var glow2 = (CFG.colors&&CFG.colors.wave2)||'#ffd54a';
 
-  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+    var frame=document.createElement('a-plane');
+    frame.setAttribute('width',u.wn*1.018); frame.setAttribute('height',u.hn*1.018);
+    frame.setAttribute('position',u.cx+' '+u.cy+' 0.000');
+    frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
+    root.appendChild(frame); setRO(frame, 5, false, false);
 
-  function pointerLocal(){
-    const ray = getRay();
-    const ints = ray?.intersections || [];
-    // buscamos intersección con el plano de drag
-    let hit=null;
-    for(let i=0;i<ints.length;i++){
-      const it=ints[i];
-      if(it.object && it.object.el && it.object.el.classList.contains('dragplane')){ hit=it; break; }
-    }
-    if(!hit) return null;
-    const p = hit.point.clone();
-    root.object3D.worldToLocal(p);
-    return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
-  }
-  function heartFromEl(el){ return hearts.find(h=>h.el===el)||null; }
-
-  // Tocar: si tocas un corazón => drag; si tocas el póster => crear corazón
-  function onPointerDown(){
-    const ray = getRay();
-    const ints = ray?.intersections || [];
-    let hitHeart=null;
-    for(let i=0;i<ints.length;i++){
-      const it=ints[i];
-      if(it.object && it.object.el && it.object.el.classList.contains('heart')){ hitHeart=it; break; }
-    }
-    if(hitHeart){
-      const h = heartFromEl(hitHeart.object.el); if(!h) return;
-      const p = pointerLocal(); if(!p) return;
-      dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
-      lastPointer = p; lastTime = performance.now();
-    }else{
-      const p = pointerLocal(); if(!p) return;
-      spawnHeart(p.x, p.y);
-    }
-  }
-  function onPointerUp(){ dragging=null; }
-
-  scene.addEventListener('pointerdown', onPointerDown);
-  scene.addEventListener('pointerup', onPointerUp);
-  scene.addEventListener('pointerleave', onPointerUp);
-
-  (function heartsTick(){
-    const dt = 1/60, g=-0.9, damp=0.55;
-    const now = performance.now();
-    const p = pointerLocal();
-
-    if(dragging && p){
-      const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
-      const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-      if(lastPointer){
-        const dtms = Math.max(16, now-lastTime);
-        dragging.vx = (nx - dragging.x) / (dtms/1000);
-        dragging.vy = (ny - dragging.y) / (dtms/1000);
+    (function stripsGlow(){
+      var t=0.004, z=0.018;
+      var strips=[
+        {w:u.wn*1.02,h:t,   x:u.cx,           y:u.cy+u.hn/2+t/2},
+        {w:u.wn*1.02,h:t,   x:u.cx,           y:u.cy-u.hn/2-t/2},
+        {w:t,       h:u.hn, x:u.cx-u.wn/2-t/2,y:u.cy},
+        {w:t,       h:u.hn, x:u.cx+u.wn/2+t/2,y:u.cy}
+      ];
+      for(var i=0;i<strips.length;i++){
+        var s=strips[i];
+        var p=document.createElement('a-plane');
+        p.setAttribute('width',s.w); p.setAttribute('height',s.h);
+        p.setAttribute('position',s.x+' '+s.y+' '+z);
+        var col = (i%2)?glow2:glow1;
+        p.setAttribute('material','shader:standard; color:'+col+'; emissive:'+col+'; emissiveIntensity:0.26; roughness:1; metalness:0; transparent:true; opacity:.95');
+        p.setAttribute('animation__glow','property:material.emissiveIntensity; from:0.18; to:0.44; dir:alternate; dur:1200; loop:true; easing:easeInOutSine');
+        root.appendChild(p); setRO(p, 20, false, false);
       }
-      dragging.x = nx; dragging.y = ny;
-      lastPointer = p; lastTime = now;
-    }
+    })();
 
-    hearts.forEach(o=>{
-      if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
-      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-      o.el.setAttribute('position', `${o.x} ${o.y} 0.06`);
-      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
+    (function runners(){
+      var z=0.019, w=0.02, h=0.006, dur=1800;
+      function runner(x1,y1,x2,y2,color,delay){
+        var r=document.createElement('a-plane');
+        r.setAttribute('width',w); r.setAttribute('height',h);
+        r.setAttribute('position',x1+' '+y1+' '+z);
+        r.setAttribute('material','shader:standard; color:'+color+'; emissive:'+color+'; emissiveIntensity:0.9; roughness:1; metalness:0; transparent:true; opacity:1');
+        r.setAttribute('animation__go','property:position; to:'+x2+' '+y2+' '+z+'; dur:'+dur+'; dir:alternate; loop:true; easing:easeInOutSine; delay:'+(delay||0));
+        root.appendChild(r); setRO(r, 25, false, false);
+      }
+      runner(u.cx-u.wn/2, u.cy+u.hn/2+0.01, u.cx+u.wn/2, u.cy+u.hn/2+0.01, glow1, 0);
+      runner(u.cx+u.wn/2, u.cy-u.hn/2-0.01, u.cx-u.wn/2, u.cy-u.hn/2-0.01, glow2, 250);
+      runner(u.cx-u.wn/2-0.01, u.cy-u.hn/2, u.cx-u.wn/2-0.01, u.cy+u.hn/2, glow2, 500);
+      runner(u.cx+u.wn/2+0.01, u.cy+u.hn/2, u.cx+u.wn/2+0.01, u.cy-u.hn/2, glow1, 750);
+    })();
+
+    // Vídeo centrado
+    var v1=document.getElementById('v1');
+    v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
+    v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
+    var fallbackURL='https://res.cloudinary.com/dtge9nklw/video/upload/v1759311664/0_Couple_Beach_3840x2160_fgnn6o.mp4';
+    v1.src = (CFG.video && CFG.video.indexOf('http')===0) ? CFG.video : fallbackURL;
+    v1.load();
+
+    var vPlane=document.createElement('a-plane');
+    vPlane.setAttribute('width',u.wn);
+    vPlane.setAttribute('height',u.hn);
+    vPlane.setAttribute('position',u.cx+' '+u.cy+' 0.02');
+    vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
+    root.appendChild(vPlane); setRO(vPlane, 100, true, true);
+
+    function coverFromMap(map){
+      if(!map || !v1.videoWidth) return;
+      var vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
+      var rx=1,ry=1,ox=0,oy=0;
+      if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
+      map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
+    }
+    vPlane.addEventListener('materialtextureloaded', function(e){ coverFromMap(e.detail.texture); });
+    v1.addEventListener('loadedmetadata', function(){
+      var mesh=vPlane.getObject3D('mesh');
+      if(mesh && mesh.material && mesh.material.map){ coverFromMap(mesh.material.map); }
     });
 
-    requestAnimationFrame(heartsTick);
-  })();
+    // Canvas overlay (texto + barra grande)
+    var Cw=2048, Ch=Math.round(Cw*H);
+    var canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
+    var ctx=canvas.getContext('2d');
 
-  /* ---------- START / UI ---------- */
-  const btnStart=document.getElementById('btnStart');
-  function setRO(el, order, depthTest, depthWrite){
-    el.addEventListener('loaded', ()=>{
-      const mesh = el.getObject3D('mesh'); if(!mesh) return;
-      mesh.renderOrder = order;
-      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
+    var overlay=document.createElement('a-plane');
+    overlay.setAttribute('width',1); overlay.setAttribute('height',H);
+    overlay.setAttribute('position','0 0 0.0');
+    overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
+    root.appendChild(overlay); setRO(overlay, 3, false, false);
+    overlay.addEventListener('loaded', function(){
+      var tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
+      var m=overlay.getObject3D('mesh');
+      if(m && m.material){ m.material.map=tex; m.material.needsUpdate=true; }
+      overlay.__tex=tex;
     });
-  }
 
-  btnStart.onclick=async()=>{
-    try{
-      btnStart.disabled=true; log('Pidiendo cámara…');
-      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      s.getTracks().forEach(t=>t.stop());
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-      if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
-      btnStart.textContent='Cámara lista';
-    }catch(e){
-      btnStart.disabled=false;
-      log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+    var titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
+    function fitFontFor(text,wpx,hpx,weight){
+      var lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74);
+      while(lo<=hi){
+        var mid=(lo+hi>>1);
+        ctx.font=(weight||700)+' '+mid+'px system-ui,Segoe UI,Roboto';
+        if(ctx.measureText(text).width<=wpx*0.94){ best=mid; lo=mid+1; } else { hi=mid-1; }
+      }
+      return best;
     }
-  };
+    var titlePx=fitFontFor(CFG.title||'', titleSlot.w*Cw/PW, titleSlot.h*Ch/PH, 800);
+    var artistPx=fitFontFor(CFG.artist||'',artistSlot.w*Cw/PW, artistSlot.h*Ch/PH, 600);
 
-  anchor.addEventListener('targetFound', async ()=>{
-    try{ await v1.play(); }catch{}
-    // audio autoplay
-    setupAudio();
-    try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
-    document.getElementById('btnAudio').disabled=false;
-    // corazones de bienvenida
-    for(let i=0;i<4;i++) spawnHeart();
-    log('Target FOUND');
-  });
+    // Audio + analyser
+    var btnAudio=document.getElementById('btnAudio');
+    var audio=null, acx=null, analyser=null;
+    function setupAudio(){
+      if(audio) return;
+      audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
+      try{
+        var AC=window.AudioContext||window.webkitAudioContext;
+        acx=new AC(); analyser=acx.createAnalyser();
+        analyser.fftSize=128; analyser.smoothingTimeConstant=0.88;
+        var src=acx.createMediaElementSource(audio); src.connect(analyser); analyser.connect(acx.destination);
+      }catch(e){}
+      audio.addEventListener('play', function(){ btnAudio.textContent='⏸ Audio'; });
+      audio.addEventListener('pause',function(){ btnAudio.textContent='▶️ Audio'; });
+    }
+    btnAudio.onclick=function(){
+      setupAudio();
+      (async function(){
+        try{
+          if(audio.paused){ if(acx && acx.state==='suspended'){ await acx.resume(); } await audio.play(); }
+          else { audio.pause(); }
+        }catch(e){}
+      })();
+    };
 
-  anchor.addEventListener('targetLost', ()=>{
-    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
-  });
+    var BARS=56;                       // más barras
+    var waveH=Math.round(80*Cw/2048);  // más alto
+    var gap=Math.round(34*Cw/2048);    // más separación
+    var levels=[], peaks=[];
+    for(var i0=0;i0<BARS;i0++){ levels[i0]=0; peaks[i0]=0; }
+    function mmss(t){ if(!isFinite(t)||t<0) t=0; var m=Math.floor(t/60), s=Math.floor(t%60); return m+':'+String(s).padStart(2,'0'); }
 
-  // primer gesto para iOS
-  window.addEventListener('pointerup', ()=>{ btnStart.click(); }, {once:true,passive:true});
+    function draw(){
+      ctx.clearRect(0,0,Cw,Ch);
 
-  /* ---------- FIN ---------- */
-  function setRO(el, order, depthTest, depthWrite){
-    el.addEventListener('loaded', ()=>{
-      const mesh = el.getObject3D('mesh'); if(!mesh) return;
-      mesh.renderOrder = order;
-      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
+      // Título
+      var tx=Math.round(titleSlot.x*Cw/PW), ty=Math.round(titleSlot.y*Ch/PH),
+          tw=Math.round(titleSlot.w*Cw/PW), th=Math.round(titleSlot.h*Ch/PH);
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.font='800 '+titlePx+'px system-ui,Segoe UI,Roboto';
+      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
+      ctx.fillStyle=(CFG.colors&&CFG.colors.title)||'#000'; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+
+      // Artista
+      var ax=Math.round(artistSlot.x*Cw/PW), ay=Math.round(artistSlot.y*Ch/PH),
+          aw=Math.round(artistSlot.w*Cw/PW), ah=Math.round(artistSlot.h*Ch/PH);
+      ctx.font='600 '+artistPx+'px system-ui,Segoe UI,Roboto';
+      ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
+      ctx.fillStyle=(CFG.colors&&CFG.colors.artist)||'#000'; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+
+      // Barra base + progreso
+      var pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
+          pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(2,Math.round(barSlot.h*Ch/PH));
+      ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
+      ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
+
+      var p=0, cur='0:00', dur='0:00';
+      if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
+      var fw=Math.max(2, Math.floor(pbw*p));
+      var grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
+      grad.addColorStop(0, glow1); grad.addColorStop(1, glow2);
+      ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
+
+      var kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
+      ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
+      ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+      ctx.font='700 '+Math.round(28*Cw/2048)+'px system-ui,Segoe UI,Roboto';
+      ctx.fillText(cur, pbx, pby - 10);
+      ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
+
+      // Espectro doble
+      var arr = analyser ? (new Uint8Array(analyser.frequencyBinCount)) : null;
+      if(arr) analyser.getByteFrequencyData(arr);
+
+      var step=pbw/BARS, yTop=pby - gap, yBot=pby + pbh + gap;
+      var t = performance.now();
+      var sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
+
+      for(var pass=0; pass<2; pass++){
+        var baseY = (pass===0? yTop : yBot);
+        var col = (pass===0? glow1 : glow2);
+
+        for(var i=0;i<BARS;i++){
+          var bandIndex = arr ? Math.min(arr.length-1, 2+i) : 0;
+          var raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
+          levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
+          peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
+
+          var x = Math.round(pbx + i*step + step*0.18);
+          var w = Math.max(2, Math.round(step*0.64));
+          var h = Math.max(3, Math.round(levels[i]*waveH));
+          var peakY = Math.max(4, Math.round(peaks[i]*waveH));
+
+          var dist = Math.abs((x+w/2) - sweepX);
+          var glowAmt = Math.max(0, 1 - dist/120);
+
+          ctx.fillStyle = col;
+          if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+
+          ctx.globalAlpha = 0.7; ctx.fillStyle = '#000';
+          if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2); else ctx.fillRect(x, baseY+peakY, w, 2);
+          ctx.globalAlpha = 1;
+
+          if(glowAmt>0){
+            var g = ctx.createLinearGradient(x,0,x+w,0);
+            g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glowAmt)+')');
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g;
+            if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
+          }
+        }
+      }
+
+      if(overlay.__tex){ overlay.__tex.needsUpdate = true; }
+      requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+
+    // Corazones por todo el póster
+    var HEART_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>';
+    var hearts=[]; // {el,x,y,vx,vy}
+    var area = { x1:-0.5+0.04, x2:0.5-0.04, y1:-H/2+0.04, y2:H/2-0.04 };
+
+    var dragPlane=document.createElement('a-plane');
+    dragPlane.classList.add('dragplane','ui3d');
+    dragPlane.setAttribute('width',1); dragPlane.setAttribute('height',H);
+    dragPlane.setAttribute('position','0 0 0.07');
+    dragPlane.setAttribute('material','transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+    root.appendChild(dragPlane); setRO(dragPlane, 150, false, false);
+
+    function spawnHeart(x,y){
+      var xx = (typeof x==='number')?x: (area.x1+area.x2)/2;
+      var yy = (typeof y==='number')?y: (area.y1+area.y2)/2;
+      var h = document.createElement('a-image');
+      h.setAttribute('src', HEART_SVG);
+      h.setAttribute('width', 0.11); h.setAttribute('height', 0.11);
+      h.setAttribute('position', xx+' '+yy+' 0.06');
+      h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double');
+      h.classList.add('ui3d','heart');
+      root.appendChild(h); setRO(h, 140, false, false);
+      hearts.push({el:h, x:xx, y:yy, vx:(Math.random()-0.5)*0.25, vy:0.35+Math.random()*0.25});
+      if(hearts.length>36){ var old=hearts.shift(); if(old && old.el) old.el.remove(); }
+    }
+
+    var dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+
+    function pointerLocal(){
+      var ray = getRay();
+      var ints = (ray && ray.intersections) ? ray.intersections : [];
+      var hit=null;
+      for(var i=0;i<ints.length;i++){
+        var it=ints[i];
+        if(it.object && it.object.el && it.object.el.classList.contains('dragplane')){ hit=it; break; }
+      }
+      if(!hit) return null;
+      var p = hit.point.clone();
+      root.object3D.worldToLocal(p);
+      return {x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2)};
+    }
+    function heartFromEl(el){ for(var i=0;i<hearts.length;i++){ if(hearts[i].el===el) return hearts[i]; } return null; }
+
+    function onPointerDown(){
+      var ray = getRay();
+      var ints = (ray && ray.intersections) ? ray.intersections : [];
+      var hitHeart=null;
+      for(var i=0;i<ints.length;i++){
+        var it=ints[i];
+        if(it.object && it.object.el && it.object.el.classList.contains('heart')){ hitHeart=it; break; }
+      }
+      if(hitHeart){
+        var h = heartFromEl(hitHeart.object.el); if(!h) return;
+        var p = pointerLocal(); if(!p) return;
+        dragging = h; dragOffset = {x: h.x - p.x, y: h.y - p.y};
+        lastPointer = p; lastTime = performance.now();
+      }else{
+        var p2 = pointerLocal(); if(!p2) return;
+        spawnHeart(p2.x, p2.y);
+      }
+    }
+    function onPointerUp(){ dragging=null; }
+    scene.addEventListener('pointerdown', onPointerDown);
+    scene.addEventListener('pointerup', onPointerUp);
+    scene.addEventListener('pointerleave', onPointerUp);
+
+    (function heartsTick(){
+      var dt = 1/60, g=-0.9, damp=0.55;
+      var now = performance.now();
+      var p = pointerLocal();
+
+      if(dragging && p){
+        var nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
+        var ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
+        if(lastPointer){
+          var dtms = Math.max(16, now-lastTime);
+          dragging.vx = (nx - dragging.x) / (dtms/1000);
+          dragging.vy = (ny - dragging.y) / (dtms/1000);
+        }
+        dragging.x = nx; dragging.y = ny;
+        lastPointer = p; lastTime = now;
+      }
+
+      for(var j=0;j<hearts.length;j++){
+        var o=hearts[j];
+        if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
+        if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+        if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+        if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+        if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+        o.el.setAttribute('position', o.x+' '+o.y+' 0.06');
+        o.el.setAttribute('rotation', '0 0 '+(Math.sin(performance.now()/300 + o.x*10)*6));
+      }
+
+      requestAnimationFrame(heartsTick);
+    })();
+
+    // ---------- Botón de cámara robusto ----------
+    var btnStart=document.getElementById('btnStart');
+    btnStart.addEventListener('click', function(){
+      btnStart.disabled=true;
+      (async function(){
+        try{
+          log('Pidiendo cámara…');
+          var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+          // soltamos tracks (MindAR pedirá su stream)
+          s.getTracks().forEach(function(t){ t.stop(); });
+        }catch(e){}
+        try{
+          var sys=scene.systems['mindar-image-system'], comp=scene.components['mindar-image'];
+          if(sys && sys.start){ await sys.start(); }
+          else if(comp && comp.start){ await comp.start(); }
+          btnStart.textContent='Cámara lista';
+          log('Cámara iniciada');
+        }catch(e2){
+          btnStart.disabled=false;
+          log('No se pudo iniciar la cámara ('+(e2.name||'')+' '+(e2.message||e2)+')');
+        }
+      })();
+    });
+
+    // Auto-arranque con primer toque (iOS ayuda)
+    window.addEventListener('pointerdown', function(){
+      var sys = scene.systems['mindar-image-system'];
+      if(!sys || !sys.active) btnStart.click();
+    }, {once:true,passive:true});
+
+    // Estados target
+    anchor.addEventListener('targetFound', function(){
+      v1.play().catch(function(){});
+      setupAudio();
+      (async function(){ try{ if(acx && acx.state==='suspended'){ await acx.resume(); } await audio.play(); }catch(e){} })();
+      document.getElementById('btnAudio').disabled=false;
+      for(var i=0;i<4;i++) spawnHeart();
+      log('Target FOUND');
+    });
+    anchor.addEventListener('targetLost', function(){
+      v1.pause(); if(audio) audio.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
     });
   }
 })();
