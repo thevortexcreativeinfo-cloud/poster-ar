@@ -8,14 +8,9 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Feed de cámara de MindAR al fondo (sólo esos ids) */
-  #mindar-image-video, #mindar-video{
-    position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
-    object-fit:cover!important;z-index:0!important;background:#000!important
-  }
-  /* WebGL por delante */
+  /* WebGL delante, pero transparente para ver la cámara */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
-  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important;background:transparent!important}
   /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
@@ -41,6 +36,7 @@
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
+    <!-- Vídeo de CONTENIDO (no es la cámara) -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -56,22 +52,6 @@
   const qs = new URLSearchParams(location.search);
   const log = (...m) => { const el=document.getElementById('dbg'); el.textContent = m.join(' ')+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',...m); };
 
-  /* ---------- Parchea getUserMedia para forzar cámara trasera ---------- */
-  (function patchGUM(){
-    const orig = navigator.mediaDevices && navigator.mediaDevices.getUserMedia && navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    if(!orig) return;
-    navigator.mediaDevices.getUserMedia = function(constraints){
-      constraints = constraints || {};
-      if(!constraints.video) constraints.video = {};
-      if(typeof constraints.video === 'object'){
-        if(!('facingMode' in constraints.video)) constraints.video.facingMode = {ideal:'environment'};
-        if(!('width' in constraints.video)) constraints.video.width = {ideal:1280};
-        if(!('height' in constraints.video)) constraints.video.height = {ideal:720};
-      }
-      return orig(constraints);
-    };
-  })();
-
   /* ---------- Helpers ---------- */
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   function setRO(el, order, depthTest, depthWrite){
@@ -82,16 +62,16 @@
     });
   }
   const getRay = ()=>document.getElementById('mouseRay')?.components?.raycaster || null;
-  const mindarVideoEl = ()=> document.getElementById('mindar-image-video') || document.getElementById('mindar-video');
 
-  /* Estila sólo el feed de MindAR cuando aparezca */
-  new MutationObserver(()=>{
-    const mv = mindarVideoEl();
-    if(mv){
-      mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
-      mv.muted = true;
+  /* Estilo SOLO al vídeo de cámara de MindAR (cuando exista) */
+  const styleCameraVideo = () => {
+    const mv = document.getElementById('mindar-image-video') || document.getElementById('mindar-video');
+    if(mv && mv.srcObject instanceof MediaStream){
+      Object.assign(mv.style, {position:'fixed', inset:'0', width:'100vw', height:'100vh', objectFit:'cover', zIndex:'0', background:'#000'});
     }
-  }).observe(document.documentElement,{subtree:true,childList:true});
+  };
+  const mo = new MutationObserver(styleCameraVideo);
+  mo.observe(document.documentElement,{subtree:true,childList:true});
 
   /* ---------- Cargar JSON ---------- */
   const cfgUrl = qs.get('cfg');
@@ -102,6 +82,12 @@
 
   /* ---------- MindAR ---------- */
   const scene = document.getElementById('scene');
+  // asegurar canvas transparente
+  scene.addEventListener('loaded', ()=>{
+    if(scene.renderer) scene.renderer.setClearColor(0x000000, 0); // alpha 0
+  });
+
+  // colocar tu target (con uiLoading BIEN)
   scene.setAttribute('mindar-image',
     `imageTargetSrc:${CFG.target}; uiLoading:true; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
 
@@ -115,7 +101,7 @@
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- Fondo (papel) ---------- */
+  /* ---------- Póster: fondo ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
@@ -130,7 +116,7 @@
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- Vídeo de CONTENIDO (siempre centrado) ---------- */
+  /* ---------- Vídeo de CONTENIDO (centrado SIEMPRE) ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
@@ -145,21 +131,17 @@
   vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
-  // crop tipo object-fit: cover, centrado y fijo (sin animaciones)
   function coverFromMap(map){
     if(!map || !v1.videoWidth) return;
     const vr=v1.videoWidth/v1.videoHeight, rr=vslot.w/vslot.h;
     let rx=1,ry=1,ox=0,oy=0;
     if(vr>rr){ rx=rr/vr; ry=1; ox=(1-rx)/2; } else { rx=1; ry=vr/rr; oy=(1-ry)/2; }
-    map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true;
+    map.offset.set(ox,oy); map.repeat.set(rx,ry); map.needsUpdate=true; // centrado y estático
   }
   vPlane.addEventListener('materialtextureloaded', e=>coverFromMap(e.detail.texture));
-  v1.addEventListener('loadedmetadata', ()=>{
-    const map=vPlane.getObject3D('mesh')?.material?.map;
-    if(map) coverFromMap(map);
-  });
+  v1.addEventListener('loadedmetadata', ()=>coverFromMap(vPlane.getObject3D('mesh')?.material?.map));
 
-  // Fallback a THREE.VideoTexture si hiciera falta
+  // Fallback a VideoTexture si hiciera falta
   let forcedVideoTex=false;
   function forceThreeVideoTexture(){
     if(forcedVideoTex) return;
@@ -172,31 +154,12 @@
     log('Fallback a THREE.VideoTexture');
   }
   const checkBlackFallback=()=>{
-    const mv=mindarVideoEl();
-    const okCam = mv && mv.videoWidth>0 && mv.readyState>=2;
-    if(!okCam){ log('⚠️ Feed de cámara no activo, reintentando…'); tryRestartMindAR(); }
-    const mesh=vPlane.getObject3D('mesh'), map=mesh?.material?.map;
+    const mesh=vPlane.getObject3D('mesh');
+    const map=mesh?.material?.map;
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   };
 
-  async function tryRestartMindAR(){
-    const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
-    try{ sys && sys.stop && sys.stop(); }catch{}
-    await new Promise(r=>setTimeout(r,200));
-    try{
-      if(sys && sys.start) await sys.start();
-      else if(comp && comp.start) await comp.start();
-      setTimeout(()=>{
-        const mv=mindarVideoEl();
-        if(mv){
-          mv.muted=true; mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
-          if(mv.paused) mv.play().catch(()=>{});
-        }
-      }, 100);
-    }catch(e){ log('❌ Reinicio MindAR falló:', e && (e.name||e.message)||e); }
-  }
-
-  /* ---------- Overlay canvas: textos + espectro grande ---------- */
+  /* ---------- Canvas overlay: textos + espectro grande ---------- */
   const Cw=2048, Ch=Math.round(Cw*H);
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
@@ -236,8 +199,10 @@
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- Espectro grande (64 barras, doble banda) ---------- */
-  const BARS=64, waveH=Math.round(80*Cw/2048), gap=Math.round(36*Cw/2048);
+  /* ---------- Espectro ampliado (grande) ---------- */
+  const BARS=64;
+  const waveH=Math.round(80*Cw/2048);
+  const gap=Math.round(36*Cw/2048);
   const levels=new Array(BARS).fill(0), peaks=new Array(BARS).fill(0);
   const mmss=t=>{ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; };
 
@@ -259,7 +224,7 @@
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
     ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
-    // Barra base + progreso
+    // Barra progreso
     const pbx=Math.round(barSlot.x*Cw/PW), pby=Math.round(barSlot.y*Ch/PH),
           pbw=Math.round(barSlot.w*Cw/PW), pbh=Math.max(4,Math.round(barSlot.h*Ch/PH));
     ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
@@ -277,10 +242,11 @@
     ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
 
     ctx.fillStyle='#000'; ctx.textBaseline='alphabetic';
-    ctx.textAlign='left';  ctx.font = `700 ${Math.round(30*Cw/2048)}px system-ui,Segoe UI,Roboto`; ctx.fillText(cur, pbx, pby - 12);
+    ctx.font = `700 ${Math.round(30*Cw/2048)}px system-ui,Segoe UI,Roboto`;
+    ctx.textAlign='left';  ctx.fillText(cur, pbx, pby - 12);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 12);
 
-    // Espectro doble
+    // Espectro doble grande
     const arr = (analyser? (new Uint8Array(analyser.frequencyBinCount)) : null);
     if(arr) analyser.getByteFrequencyData(arr);
 
@@ -354,7 +320,6 @@
     hearts.push({el:h,x:xx,y:yy,vx:(Math.random()-0.5)*0.28,vy:(Math.random()-0.5)*0.28});
     if(hearts.length>28){ const old=hearts.shift(); if(old?.el) old.el.remove(); }
   }
-
   dragPlane.addEventListener('click', ()=>{
     const ray=getRay(); const ints=ray && ray.intersections ? ray.intersections : [];
     let hit=null; for(let i=0;i<ints.length;i++){ if(ints[i].object && ints[i].object.el===dragPlane){ hit=ints[i]; break; } }
@@ -406,38 +371,23 @@
 
   /* ---------- Estados / UI ---------- */
   const btnStart=document.getElementById('btnStart');
-
-  // Arranque: sólo MindAR (dejamos que él pida la cámara)
   btnStart.onclick=async()=>{
     try{
-      btnStart.disabled=true; log('Arrancando cámara con MindAR…');
-      const sys=scene.systems['mindar-image-system']; const comp=scene.components['mindar-image'];
+      btnStart.disabled=true;
+      log('Arrancando MindAR…');
+      const sys=scene.systems['mindar-image-system'];
+      const comp=scene.components['mindar-image'];
       if(sys && sys.start) await sys.start(); else if(comp && comp.start) await comp.start();
-      btnStart.textContent='Cámara lista';
-      const mv=mindarVideoEl();
-      if(mv){
-        mv.muted=true; mv.setAttribute('playsinline','true'); mv.setAttribute('webkit-playsinline','true');
-        if(mv.paused) mv.play().catch(()=>{});
-      }
-      // Watchdog: si en ~1.8s no hay vídeo, reintenta
-      setTimeout(checkBlackFallback, 1800);
+      styleCameraVideo(); // en cuanto exista el vídeo, se estiliza
+      log('Cámara iniciada');
     }catch(e){
       btnStart.disabled=false;
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
     }
   };
 
-  // Reintento si la pestaña vuelve al frente o el vídeo queda pausado
-  document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState==='visible'){
-      const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{});
-      setTimeout(checkBlackFallback, 600);
-    }
-  });
-
   anchor.addEventListener('targetFound', async ()=>{
-    try{ await v1.play(); }catch{}
-    setTimeout(()=>{ const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{}); }, 100);
+    try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
     document.getElementById('btnAudio').disabled=false;
@@ -448,8 +398,6 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // Primer gesto ayuda a iOS + arranque directo
-  window.addEventListener('pointerup', ()=>{ const mv=mindarVideoEl(); if(mv && mv.paused) mv.play().catch(()=>{}); btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
 </body>
