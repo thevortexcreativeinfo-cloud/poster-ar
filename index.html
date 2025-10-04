@@ -109,13 +109,28 @@
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- marco fino ---------- */
+  /* ---------- marco fino existente ---------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
   const frameThin=document.createElement('a-plane');
   frameThin.setAttribute('width',u.wn*1.012); frameThin.setAttribute('height',u.hn*1.012);
   frameThin.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
   frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
   root.appendChild(frameThin); setRO(frameThin, 5, false, false);
+
+  /* ---------- marco bonito del vídeo (paspartú + marco) ---------- */
+  const frameMat = document.createElement('a-plane');
+  frameMat.setAttribute('width', u.wn*1.08);
+  frameMat.setAttribute('height', u.hn*1.08);
+  frameMat.setAttribute('position', `${u.cx} ${u.cy} 0.017`);        // detrás del vídeo
+  frameMat.setAttribute('material', 'shader:flat; color:#0f1522; side:double; transparent:false');
+  root.appendChild(frameMat); setRO(frameMat, 60, false, false);
+
+  const frameNice = document.createElement('a-plane');
+  frameNice.setAttribute('width', u.wn*1.035);
+  frameNice.setAttribute('height', u.hn*1.035);
+  frameNice.setAttribute('position', `${u.cx} ${u.cy} 0.0185`);      // justo bajo el vídeo
+  frameNice.setAttribute('material', 'shader:flat; color:#e9eef2; side:double; transparent:false');
+  root.appendChild(frameNice); setRO(frameNice, 80, false, false);
 
   /* ---------- vídeo (quieto) ---------- */
   const v1=document.getElementById('v1');
@@ -159,7 +174,7 @@
 
   /* ---------- overlay canvas (texto + barra) ---------- */
   const DPR = Math.min(window.devicePixelRatio||1, 1.5);
-  let   Cw  = Math.round(1600 * DPR);         // base más ligera que 2048
+  let   Cw  = Math.round(1600 * DPR);
   let   Ch  = Math.round(Cw * H);
 
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
@@ -179,7 +194,7 @@
   function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
   function px(n, axis){ return axis==='x' ? Math.round(n*Cw/PW) : Math.round(n*Ch/PH); }
 
-  /* ---------- audio + analyser (con throttle) ---------- */
+  /* ---------- audio + analyser (throttle) ---------- */
   const btnAudio=document.getElementById('btnAudio');
   let audio=null, acx=null, analyser=null, freqArr=null, anaSkip=0;
   function setupAudio(){
@@ -222,7 +237,7 @@
       gapBase  = Math.round(24*Cw/2048);
       overlay.__tex && (overlay.__tex.needsUpdate=true);
     }
-    if (fpsAvg > 40 && Cw<1600){ // recupera calidad si va sobrado
+    if (fpsAvg > 40 && Cw<1600){
       Cw=1600; Ch=Math.round(Cw*H);
       canvas.width=Cw; canvas.height=Ch;
       waveHBase = Math.round(36*Cw/2048);
@@ -235,7 +250,6 @@
   const artistPx=fitFontFor(CFG.artist||'', px(artistSlot.w,'x'), px(artistSlot.h,'y'), 600);
 
   function draw(ts){
-    // 30 FPS throttle
     if(ts && ts - lastDrawTS < 33){ requestAnimationFrame(draw); return; }
     lastDrawTS = ts||performance.now();
     if(!shouldDraw){ requestAnimationFrame(draw); return; }
@@ -281,7 +295,7 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // espectro doble (lectura de audio con throttle)
+    // espectro doble (throttled)
     if (analyser && freqArr && (anaSkip++ % 2 === 0)) analyser.getByteFrequencyData(freqArr);
     const arr = freqArr;
 
@@ -301,8 +315,8 @@
 
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
-        const h = Math.max(3, Math.round(levels[i]*waveH));
-        const peakY = Math.max(4, Math.round(peaks[i]*waveH));
+        const h = Math.max(3, Math.round(levels[i]*waveHBase));
+        const peakY = Math.max(4, Math.round(peaks[i]*waveHBase));
 
         const dist = Math.abs((x+w/2) - sweepX);
         const glow = Math.max(0, 1 - dist/120);
@@ -310,14 +324,12 @@
         ctx.fillStyle = col;
         if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
 
-        // peak-hold
         ctx.globalAlpha = 0.7;
         ctx.fillStyle = '#000';
         if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
         else         ctx.fillRect(x, baseY+peakY,   w, 2);
         ctx.globalAlpha = 1;
 
-        // glow barrido
         if(glow>0){
           const g = ctx.createLinearGradient(x,0,x+w,0);
           g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
@@ -334,8 +346,9 @@
   }
   requestAnimationFrame(draw);
 
-  /* ---------- CORAZONES (tap para crear, drag + física) - usa THREE.Raycaster sólo en eventos ---------- */
+  /* ---------- CORAZONES (tap para crear, drag + física) ---------- */
   (() => {
+    const MAX_HEARTS = 10;
     const hearts = []; // {el,x,y,vx,vy}
     const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
@@ -349,7 +362,7 @@
     root.appendChild(dragPlane);
     setRO(dragPlane, 130, false, false);
 
-    // Raycaster propio
+    // Raycaster propio (usamos SOLO pointer events → evita doble corazón)
     const R = new AFRAME.THREE.Raycaster();
     const NDC = new AFRAME.THREE.Vector2();
 
@@ -377,6 +390,13 @@
       return { x: clamp(lp.x, area.x1, area.x2), y: clamp(lp.y, area.y1, area.y2) };
     }
 
+    function removeHeartObj(obj){
+      if(!obj || !obj.el) return;
+      // pequeño fade antes de eliminar
+      obj.el.setAttribute('animation__fade','property: material.opacity; from:1; to:0; dur:220; easing:easeOutQuad');
+      obj.el.addEventListener('animationcomplete__fade', ()=>{ obj.el.remove(); }, {once:true});
+    }
+
     function spawnHeart(x, y){
       const h = document.createElement('a-image');
       h.classList.add('heart');
@@ -384,11 +404,16 @@
       h.setAttribute('width', 0.14);
       h.setAttribute('height', 0.14);
       h.setAttribute('position', `${x} ${y} 0.08`);
-      h.setAttribute('material','transparent:true; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
+      h.setAttribute('material','transparent:true; opacity:1; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
       root.appendChild(h);
       setRO(h, 140, false, false);
       hearts.push({ el:h, x, y, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3 });
-      if(hearts.length>28){ const old = hearts.shift(); old?.el?.remove(); }
+
+      // limitar a 10: borrar el más antiguo con fade
+      while(hearts.length > MAX_HEARTS){
+        const old = hearts.shift();
+        removeHeartObj(old);
+      }
     }
 
     function pickHeart(e){
@@ -402,14 +427,14 @@
       return hearts.find(h=>h.el===el) || null;
     }
 
-    // Gestos
-    let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
+    // Gestos (SOLO pointer events → nada de touchstart/click)
+    let dragging=null, dragOffset={x:0,y:0}, lastTime=0;
 
     function beginDrag(h, e){
       const p = pointerOnPlane(e); if(!p) return;
       dragging = h;
       dragOffset = { x:h.x - p.x, y:h.y - p.y };
-      lastPointer = p; lastTime = performance.now();
+      lastTime = performance.now();
     }
 
     const onDown = (e) => {
@@ -430,7 +455,7 @@
       dragging.vx = (nx - dragging.x)/(dtms/1000);
       dragging.vy = (ny - dragging.y)/(dtms/1000);
       dragging.x = nx; dragging.y = ny;
-      lastPointer = p; lastTime = now;
+      lastTime = now;
     };
     const onUp = () => { dragging = null; };
 
@@ -440,10 +465,7 @@
       c.addEventListener('pointerdown', onDown, {passive:true});
       c.addEventListener('pointermove', onMove, {passive:true});
       window.addEventListener('pointerup', onUp, {passive:true});
-      // móvil
-      c.addEventListener('touchstart', onDown, {passive:true});
-      c.addEventListener('touchmove',  onMove, {passive:true});
-      window.addEventListener('touchend', onUp, {passive:true});
+      // NO touchstart/click → evita duplicados
     }
     addCanvasListeners();
 
@@ -464,7 +486,7 @@
   })();
 
 
-  /* ---------- botón cámara (más eficiente) ---------- */
+  /* ---------- botón cámara ---------- */
   async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true})); }
   async function waitMindARReady(){
     if(scene.components['mindar-image']) return;
@@ -519,13 +541,11 @@
     v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
   });
 
-  // Ahorro cuando la pestaña no es visible
   document.addEventListener('visibilitychange', ()=>{
     if (document.hidden){ shouldDraw=false; audio?.pause(); }
     else { shouldDraw=true; }
   });
 
-  // iOS: primer gesto ayuda a media
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); if(!scene.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
