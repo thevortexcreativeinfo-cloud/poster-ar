@@ -302,102 +302,142 @@
   }
   requestAnimationFrame(draw);
 
- /* ---------- CORAZONES: tap para crear, drag + física (A-Frame friendly) ---------- */
-const hearts = []; // {el,x,y,vx,vy}
-const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
+/* ---------- CORAZONES (tap para crear, drag + física) - versión con THREE.Raycaster ---------- */
+(() => {
+  const hearts = []; // {el,x,y,vx,vy}
+  const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
-/* Plano invisible receptor (un poco por delante del vídeo/overlay) */
-const dragPlane = document.createElement('a-plane');
-dragPlane.classList.add('dragplane');
-dragPlane.setAttribute('width', 1);
-dragPlane.setAttribute('height', H);
-dragPlane.setAttribute('position', '0 0 0.06');
-dragPlane.setAttribute('material', 'transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-root.appendChild(dragPlane);
-setRO(dragPlane, 130, false, false);
-refreshRay();
+  // Plano invisible receptor, por delante del vídeo (0.02) y del overlay (0.00)
+  const dragPlane = document.createElement('a-plane');
+  dragPlane.classList.add('dragplane');
+  dragPlane.setAttribute('width', 1);
+  dragPlane.setAttribute('height', H);
+  dragPlane.setAttribute('position', '0 0 0.06');
+  dragPlane.setAttribute('material', 'transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(dragPlane);
+  setRO(dragPlane, 130, false, false);
+  refreshRay?.();
 
-/* Helpers de intersección */
-function pointerOn(el){
-  const ray = getRay();
-  if(!ray) return null;
-  const hit = ray.getIntersection(el);
-  if(!hit || !hit.point) return null;
-  const p = hit.point.clone ? hit.point.clone() : new AFRAME.THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
-  root.object3D.worldToLocal(p);
-  return { x: clamp(p.x, area.x1, area.x2), y: clamp(p.y, area.y1, area.y2) };
-}
-function pointerLocal(){ return pointerOn(dragPlane); }
+  // --- Raycaster propio (independiente del cursor de A-Frame) ---
+  const R = new AFRAME.THREE.Raycaster();
+  const NDC = new AFRAME.THREE.Vector2();
 
-/* Crear corazón (siempre por delante del dragPlane) */
-function spawnHeart(x, y){
-  const h = document.createElement('a-image');
-  h.classList.add('heart');
-  h.setAttribute('src', '#heartImg');
-  h.setAttribute('width', 0.14);
-  h.setAttribute('height', 0.14);
-  h.setAttribute('position', `${x} ${y} 0.08`);
-  h.setAttribute('material', 'transparent:true; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
-  // Iniciar arrastre cuando se pulsa el corazón (eventos A-Frame)
-  h.addEventListener('mousedown', (e)=>{ e.stopPropagation(); beginDrag(h); });
-  root.appendChild(h);
-  setRO(h, 140, false, false);
-  hearts.push({ el:h, x, y, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3 });
-  if(hearts.length>28){ const old = hearts.shift(); old?.el?.remove(); }
-  refreshRay();
-}
+  function setNDCFromEvent(e){
+    const canvas = scene.canvas || document.querySelector('canvas.a-canvas');
+    const rect = canvas.getBoundingClientRect();
+    const t = (e.touches && e.touches[0]) || e;
+    const x = (t.clientX - rect.left) / rect.width;
+    const y = (t.clientY - rect.top)  / rect.height;
+    NDC.set(x*2-1, -(y*2-1));
+  }
+  function intersectObj3D(obj3D){
+    R.setFromCamera(NDC, scene.camera);
+    const res = R.intersectObject(obj3D, true);
+    return res && res[0] || null;
+  }
+  function worldToRoot(vec3){
+    const p = vec3.clone();
+    root.object3D.worldToLocal(p);
+    return p;
+  }
+  function pointerOnPlane(e){
+    setNDCFromEvent(e);
+    const hit = intersectObj3D(dragPlane.object3D);
+    if(!hit) return null;
+    const lp = worldToRoot(hit.point);
+    return { x: clamp(lp.x, area.x1, area.x2), y: clamp(lp.y, area.y1, area.y2) };
+  }
 
-/* Tap para crear corazón (usamos mousedown y click por compatibilidad móvil/desktop) */
-function handleTap(e){
-  e && e.stopPropagation && e.stopPropagation();
-  const p = pointerLocal(); if(!p) return;
-  spawnHeart(p.x, p.y);
-}
-dragPlane.addEventListener('mousedown', handleTap);
-dragPlane.addEventListener('click',     handleTap);
+  // Crear corazón (siempre por delante del dragPlane)
+  function spawnHeart(x, y){
+    const h = document.createElement('a-image');
+    h.classList.add('heart');
+    h.setAttribute('src', '#heartImg');
+    h.setAttribute('width', 0.14);
+    h.setAttribute('height', 0.14);
+    h.setAttribute('position', `${x} ${y} 0.08`);
+    h.setAttribute('material','transparent:true; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
+    root.appendChild(h);
+    setRO(h, 140, false, false);
+    hearts.push({ el:h, x, y, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3 });
+    if(hearts.length>28){ const old = hearts.shift(); old?.el?.remove(); }
+  }
 
-/* Arrastre + física */
-let dragging = null, dragOffset = {x:0, y:0}, lastPointer = null, lastTime = 0;
+  // Elegir corazón bajo el puntero (más cercano)
+  function pickHeart(e){
+    setNDCFromEvent(e);
+    R.setFromCamera(NDC, scene.camera);
+    const objs = hearts.map(h=>h.el.object3D);
+    const res = R.intersectObjects(objs, true);
+    if(!res.length) return null;
+    const hitObj = res[0].object;
+    const el = hitObj.el || hitObj.parent?.el;
+    return hearts.find(h=>h.el===el) || null;
+  }
 
-function beginDrag(el){
-  const obj = hearts.find(h=>h.el===el);
-  const p = pointerLocal();
-  if(!obj || !p) return;
-  dragging = obj;
-  dragOffset = { x: obj.x - p.x, y: obj.y - p.y };
-  lastPointer = p; lastTime = performance.now();
-}
-scene.addEventListener('mouseup',   ()=>{ dragging = null; });
-scene.addEventListener('mouseleave',()=>{ dragging = null; });
+  // Gestos: crear / arrastrar
+  let dragging=null, dragOffset={x:0,y:0}, lastPointer=null, lastTime=0;
 
-(function heartsTick(){
-  const dt=1/60, g=-0.4, damp=0.60;
-  const now = performance.now();
-  const p = pointerLocal();
+  function beginDrag(h, e){
+    const p = pointerOnPlane(e); if(!p) return;
+    dragging = h;
+    dragOffset = { x:h.x - p.x, y:h.y - p.y };
+    lastPointer = p; lastTime = performance.now();
+  }
 
-  if(dragging && p){
+  const canvas = () => scene.canvas || document.querySelector('canvas.a-canvas');
+
+  // pointerdown: si toca corazón -> drag; si no -> crea
+  const onDown = (e) => {
+    const h = pickHeart(e);
+    if(h){ beginDrag(h, e); }
+    else{
+      const p = pointerOnPlane(e);
+      if(p) spawnHeart(p.x, p.y);
+    }
+  };
+  const onMove = (e) => {
+    if(!dragging) return;
+    const p = pointerOnPlane(e); if(!p) return;
+    const now = performance.now();
     const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
     const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-    if(lastPointer){
-      const dtms = Math.max(16, now - lastTime);
-      dragging.vx = (nx - dragging.x) / (dtms/1000);
-      dragging.vy = (ny - dragging.y) / (dtms/1000);
-    }
+    const dtms = Math.max(16, now - lastTime);
+    dragging.vx = (nx - dragging.x)/(dtms/1000);
+    dragging.vy = (ny - dragging.y)/(dtms/1000);
     dragging.x = nx; dragging.y = ny;
     lastPointer = p; lastTime = now;
-  }
+  };
+  const onUp = () => { dragging = null; };
 
-  for(const o of hearts){
-    if(o !== dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
-    if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-    if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-    if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-    if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-    o.el.setAttribute('position', `${o.x} ${o.y} 0.08`);
-    o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
-  }
+  // Escuchamos sobre el canvas para evitar conflictos con otros nodos
+  const addCanvasListeners = () => {
+    const c = canvas();
+    if(!c) { requestAnimationFrame(addCanvasListeners); return; }
+    c.addEventListener('pointerdown', onDown, {passive:true});
+    c.addEventListener('pointermove', onMove, {passive:true});
+    window.addEventListener('pointerup', onUp, {passive:true});
+    // compat móvil
+    c.addEventListener('touchstart', onDown, {passive:true});
+    c.addEventListener('touchmove',  onMove, {passive:true});
+    window.addEventListener('touchend', onUp, {passive:true});
+  };
+  addCanvasListeners();
 
-  requestAnimationFrame(heartsTick);
+  // Física simple
+  (function heartsTick(){
+    const dt=1/60, g=-0.4, damp=0.60;
+    for(const o of hearts){
+      if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
+      if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
+      if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
+      if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
+      if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
+      o.el.setAttribute('position', `${o.x} ${o.y} 0.08`);
+      o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
+    }
+    requestAnimationFrame(heartsTick);
+  })();
 })();
 
 
