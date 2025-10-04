@@ -8,13 +8,10 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás (cover) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
-  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
-  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
@@ -33,7 +30,8 @@
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
   renderer="alpha:true; antialias:false; precision:mediump; powerPreference:high-performance; sortObjects:true; logarithmicDepthBuffer:false"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1;
+                warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
@@ -41,28 +39,49 @@
     <!-- Textura del corazón pre-cargada -->
     <img id="heartImg" crossorigin="anonymous"
          src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>'>
+    <!-- Shine del marco -->
+    <img id="shineImg" crossorigin="anonymous"
+         src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="256" height="64" viewBox="0 0 256 64"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="white" stop-opacity="0"/><stop offset="0.5" stop-color="white" stop-opacity="0.28"/><stop offset="1" stop-color="white" stop-opacity="0"/></linearGradient></defs><rect width="256" height="64" fill="url(%23g)"/></svg>'>
   </a-assets>
 
-  <a-camera id="cam" look-controls="enabled:false"></a-camera>
+  <!-- Anchor bruto de MindAR -->
   <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
+  <!-- Smoother que sigue al anchor con suavizado -->
+  <a-entity id="smoother" smooth-follow="target: #anchor; lerpPos:0.35; slerpRot:0.35; lerpScale:0.35"></a-entity>
+
+  <a-camera id="cam" look-controls="enabled:false"></a-camera>
 </a-scene>
 
 <script>
+/* ---------- Componente de suavizado para eliminar jitter ---------- */
+AFRAME.registerComponent('smooth-follow',{
+  schema:{ target:{type:'selector'}, lerpPos:{default:0.35}, slerpRot:{default:0.35}, lerpScale:{default:0.35} },
+  init(){
+    this.t=new AFRAME.THREE.Vector3();
+    this.q=new AFRAME.THREE.Quaternion();
+    this.s=new AFRAME.THREE.Vector3(1,1,1);
+    this._p=new AFRAME.THREE.Vector3();
+    this._q=new AFRAME.THREE.Quaternion();
+    this._s=new AFRAME.THREE.Vector3(1,1,1);
+  },
+  tick(){
+    const tgt=this.data.target; if(!tgt) return;
+    tgt.object3D.updateMatrixWorld();
+    tgt.object3D.matrixWorld.decompose(this.t,this.q,this.s);
+    const o=this.el.object3D;
+    o.position.lerpVectors(o.position,this.t,this.data.lerpPos);
+    o.quaternion.slerpQuaternions(o.quaternion,this.q,this.data.slerpRot);
+    this._s.copy(o.scale).lerp(this.s,this.data.lerpScale); o.scale.copy(this._s);
+  }
+});
+
 (async function(){
   const qs = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* ---------- helpers ---------- */
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  function setRO(el, order, depthTest, depthWrite){
-    el.addEventListener('loaded', ()=>{
-      const mesh = el.getObject3D('mesh'); if(!mesh) return;
-      mesh.renderOrder = order;
-      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
-    });
-  }
 
-  /* ---------- patch gUM: si falla trasera, usa la que haya ---------- */
+  /* ---------- patch gUM ---------- */
   if(navigator.mediaDevices?.getUserMedia){
     const _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = (c)=>_orig(c).catch(err=>{
@@ -80,12 +99,11 @@
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ---------- MindAR ---------- */
+  /* ---------- escena + smoother ---------- */
   const scene = document.getElementById('scene');
   scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:2; filterMinCF:0.0001; filterBeta:0.006;`);
+    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;`);
 
-  // Ajuste del <video> de cámara detrás
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
@@ -96,43 +114,64 @@
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
 
   const anchor=document.getElementById('anchor');
-  const root=document.createElement('a-entity'); anchor.appendChild(root);
+  const smoother=document.getElementById('smoother');
+
+  // TODO: contenido va dentro de "root" que cuelga del smoother (no del anchor directo).
+  const root=document.createElement('a-entity'); smoother.appendChild(root);
   const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
   root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
   /* ---------- fondo póster ---------- */
+  function setRO(el, order, depthTest, depthWrite){
+    el.addEventListener('loaded', ()=>{
+      const mesh = el.getObject3D('mesh'); if(!mesh) return;
+      mesh.renderOrder = order;
+      if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
+    });
+  }
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- marco fino existente ---------- */
+  /* ---------- slot & marco bonito ---------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-  const frameThin=document.createElement('a-plane');
-  frameThin.setAttribute('width',u.wn*1.012); frameThin.setAttribute('height',u.hn*1.012);
-  frameThin.setAttribute('position',`${u.cx} ${u.cy} 0.000`);
-  frameThin.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
-  root.appendChild(frameThin); setRO(frameThin, 5, false, false);
 
-  /* ---------- marco bonito del vídeo (paspartú + marco) ---------- */
-  const frameMat = document.createElement('a-plane');
+  const frameMat=document.createElement('a-plane'); // paspartú oscuro
   frameMat.setAttribute('width', u.wn*1.08);
   frameMat.setAttribute('height', u.hn*1.08);
-  frameMat.setAttribute('position', `${u.cx} ${u.cy} 0.017`);        // detrás del vídeo
+  frameMat.setAttribute('position', `${u.cx} ${u.cy} 0.017`);
   frameMat.setAttribute('material', 'shader:flat; color:#0f1522; side:double; transparent:false');
   root.appendChild(frameMat); setRO(frameMat, 60, false, false);
 
-  const frameNice = document.createElement('a-plane');
+  const frameNice=document.createElement('a-plane'); // marco claro
   frameNice.setAttribute('width', u.wn*1.035);
   frameNice.setAttribute('height', u.hn*1.035);
-  frameNice.setAttribute('position', `${u.cx} ${u.cy} 0.0185`);      // justo bajo el vídeo
-  frameNice.setAttribute('material', 'shader:flat; color:#e9eef2; side:double; transparent:false');
+  frameNice.setAttribute('position', `${u.cx} ${u.cy} 0.0185`);
+  frameNice.setAttribute('material', 'shader:flat; color:#e9eef2; side:double; transparent:true; opacity:1');
   root.appendChild(frameNice); setRO(frameNice, 80, false, false);
 
-  /* ---------- vídeo (quieto) ---------- */
+  // Glow exterior que modularemos con el audio (solo opacidad)
+  const frameGlow=document.createElement('a-plane');
+  frameGlow.setAttribute('width', u.wn*1.12);
+  frameGlow.setAttribute('height', u.hn*1.12);
+  frameGlow.setAttribute('position', `${u.cx} ${u.cy} 0.0165`);
+  frameGlow.setAttribute('material', 'shader:flat; color:#ffffff; side:double; transparent:true; opacity:0');
+  root.appendChild(frameGlow); setRO(frameGlow, 50, false, false);
+
+  // Shine que cruza el marco
+  const frameShine=document.createElement('a-image');
+  frameShine.setAttribute('src','#shineImg');
+  frameShine.setAttribute('width', u.wn*0.45);
+  frameShine.setAttribute('height', u.hn*0.18);
+  frameShine.setAttribute('position', `${u.cx - u.wn*0.6} ${u.cy} 0.0195`);
+  frameShine.setAttribute('material','transparent:true; opacity:0.0; side:double; depthTest:false; depthWrite:false');
+  root.appendChild(frameShine); setRO(frameShine, 95, false, false);
+
+  /* ---------- vídeo ---------- */
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
@@ -172,11 +211,10 @@
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   }
 
-  /* ---------- overlay canvas (texto + barra) ---------- */
+  /* ---------- overlay canvas (texto + barra) con throttle adaptativo ---------- */
   const DPR = Math.min(window.devicePixelRatio||1, 1.5);
   let   Cw  = Math.round(1600 * DPR);
   let   Ch  = Math.round(Cw * H);
-
   const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
   const ctx=canvas.getContext('2d');
 
@@ -190,13 +228,17 @@
     const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
   });
 
+  const PW_=PW, PH_=PH;
+  function px(n, axis){ return axis==='x' ? Math.round(n*Cw/PW_) : Math.round(n*Ch/PH_); }
+
   const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
   function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
-  function px(n, axis){ return axis==='x' ? Math.round(n*Cw/PW) : Math.round(n*Ch/PH); }
+  const titlePx=fitFontFor(CFG.title||'', px(titleSlot.w,'x'), px(titleSlot.h,'y'), 800);
+  const artistPx=fitFontFor(CFG.artist||'', px(artistSlot.w,'x'), px(artistSlot.h,'y'), 600);
 
-  /* ---------- audio + analyser (throttle) ---------- */
+  /* ---------- audio + analyser ---------- */
   const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null, freqArr=null, anaSkip=0;
+  let audio=null, acx=null, analyser=null, freqArr=null, timeArr=null, anaSkip=0;
   function setupAudio(){
     if(audio) return;
     audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
@@ -209,45 +251,66 @@
       const src=acx.createMediaElementSource(audio);
       src.connect(analyser); analyser.connect(acx.destination);
       freqArr = new Uint8Array(analyser.frequencyBinCount);
+      timeArr = new Uint8Array(analyser.fftSize);
     }catch{}
     audio.addEventListener('play', ()=>btnAudio.textContent='⏸ Audio');
     audio.addEventListener('pause',()=>btnAudio.textContent='▶️ Audio');
   }
   btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
 
-  /* ---------- barra musical + draw (30 FPS throttle + adaptativo) ---------- */
+  function rmsFromTimeDomain(arr){
+    if(!arr||!arr.length) return 0;
+    let sum=0; for(let i=0;i<arr.length;i++){ const v=(arr[i]-128)/128; sum+=v*v; }
+    return Math.sqrt(sum/arr.length); // 0..~1
+  }
+
+  /* ---------- draw (30 FPS adaptativo) + anim marco/audio ---------- */
   const BARS_MAX=64; let BARS_CURRENT=48;
   const levels=new Array(BARS_MAX).fill(0), peaks=new Array(BARS_MAX).fill(0);
   let waveHBase = Math.round(36*Cw/2048), gapBase = Math.round(24*Cw/2048);
-
+  let lastDrawTS=0, shouldDraw=true, fpsAvg=60, fpsTS=performance.now();
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
-
-  let lastDrawTS=0, shouldDraw=true;
-  let fpsAvg=60, fpsTS=performance.now();
 
   function maybeAdapt(ts){
     const dt=ts - fpsTS; fpsTS = ts;
     const fps = 1000/dt; fpsAvg = fpsAvg*0.9 + fps*0.1;
-
     if (fpsAvg < 24 && BARS_CURRENT!==32){ BARS_CURRENT=32; }
     if (fpsAvg < 18 && Cw!==1280){
-      Cw=1280; Ch=Math.round(Cw*H);
-      canvas.width=Cw; canvas.height=Ch;
-      waveHBase = Math.round(36*Cw/2048);
-      gapBase  = Math.round(24*Cw/2048);
+      Cw=1280; Ch=Math.round(Cw*H); canvas.width=Cw; canvas.height=Ch;
+      waveHBase = Math.round(36*Cw/2048); gapBase  = Math.round(24*Cw/2048);
       overlay.__tex && (overlay.__tex.needsUpdate=true);
     }
     if (fpsAvg > 40 && Cw<1600){
-      Cw=1600; Ch=Math.round(Cw*H);
-      canvas.width=Cw; canvas.height=Ch;
-      waveHBase = Math.round(36*Cw/2048);
-      gapBase  = Math.round(24*Cw/2048);
+      Cw=1600; Ch=Math.round(Cw*H); canvas.width=Cw; canvas.height=Ch;
+      waveHBase = Math.round(36*Cw/2048); gapBase  = Math.round(24*Cw/2048);
       overlay.__tex && (overlay.__tex.needsUpdate=true);
     }
   }
 
-  const titlePx=fitFontFor(CFG.title||'', px(titleSlot.w,'x'), px(titleSlot.h,'y'), 800);
-  const artistPx=fitFontFor(CFG.artist||'', px(artistSlot.w,'x'), px(artistSlot.h,'y'), 600);
+  // brillo (glow) y shine del marco
+  let shinePhase=0; // 0..1
+  function animateFrameVisuals(ts){
+    // audio → pulso de glow (opacidad) + leve escala del marco claro
+    let amp=0.0;
+    if(analyser && timeArr && (anaSkip++ % 2 === 0)){ analyser.getByteTimeDomainData(timeArr); amp = rmsFromTimeDomain(timeArr); }
+    // suavizado del amp para que no parpadee
+    animateFrameVisuals._amp = animateFrameVisuals._amp? (animateFrameVisuals._amp*0.85 + amp*0.15) : amp;
+    const A = animateFrameVisuals._amp || 0;
+
+    const glowOpacity = Math.min(0.3, 0.6*A); // 0..0.3
+    frameGlow.setAttribute('material','shader:flat; color:#ffffff; transparent:true; opacity:'+glowOpacity+'; side:double');
+
+    const scalePulse = 1 + Math.min(0.02, A*0.04);
+    frameNice.setAttribute('scale', `${scalePulse} ${scalePulse} 1`);
+
+    // Shine: cruza cada ~6s
+    const speed= (Math.sin(ts/6000)*0.5+0.5)*0.00035 + 0.00025; // variación sutil
+    shinePhase=(shinePhase+speed) % 1;
+    const x = (u.cx - u.wn*0.65) + shinePhase*(u.wn*1.30);
+    const fade = (shinePhase<0.08 || shinePhase>0.92)? 0 : 0.18; // aparece/desaparece suave en extremos
+    frameShine.setAttribute('position', `${x} ${u.cy} 0.0195`);
+    frameShine.setAttribute('material', `transparent:true; opacity:${fade}; side:double; depthTest:false; depthWrite:false`);
+  }
 
   function draw(ts){
     if(ts && ts - lastDrawTS < 33){ requestAnimationFrame(draw); return; }
@@ -255,7 +318,9 @@
     if(!shouldDraw){ requestAnimationFrame(draw); return; }
 
     maybeAdapt(lastDrawTS);
+    animateFrameVisuals(lastDrawTS);
 
+    const titleColor=(CFG.colors?.title||'#000'), artistColor=(CFG.colors?.artist||'#000');
     const waveH = waveHBase, gap = gapBase;
 
     ctx.clearRect(0,0,Cw,Ch);
@@ -265,13 +330,13 @@
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-    ctx.fillStyle=(CFG.colors?.title||'#000'); ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
+    ctx.fillStyle=titleColor; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
 
     // artista
     const ax=px(artistSlot.x,'x'), ay=px(artistSlot.y,'y'), aw=px(artistSlot.w,'x'), ah=px(artistSlot.h,'y');
     ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
     ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-    ctx.fillStyle=(CFG.colors?.artist||'#000'); ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
+    ctx.fillStyle=artistColor; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
 
     // barra base
     const pbx=px(barSlot.x,'x'), pby=px(barSlot.y,'y'), pbw=px(barSlot.w,'x'), pbh=Math.max(2,px(barSlot.h,'y'));
@@ -295,10 +360,9 @@
     ctx.fillText(cur, pbx, pby - 10);
     ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
 
-    // espectro doble (throttled)
-    if (analyser && freqArr && (anaSkip++ % 2 === 0)) analyser.getByteFrequencyData(freqArr);
+    // espectro doble
+    if (analyser && freqArr && (anaSkip % 2 === 0)) analyser.getByteFrequencyData(freqArr);
     const arr = freqArr;
-
     const step=pbw/BARS_CURRENT, yTop=pby - gap, yBot=pby + pbh + gap;
     const t = performance.now();
     const sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
@@ -352,7 +416,7 @@
     const hearts = []; // {el,x,y,vx,vy}
     const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
 
-    // Plano receptor por delante del vídeo (0.02) y overlay (0.00)
+    // Plano receptor
     const dragPlane = document.createElement('a-plane');
     dragPlane.classList.add('dragplane');
     dragPlane.setAttribute('width', 1);
@@ -362,10 +426,9 @@
     root.appendChild(dragPlane);
     setRO(dragPlane, 130, false, false);
 
-    // Raycaster propio (usamos SOLO pointer events → evita doble corazón)
+    // Raycaster propio (solo pointer*)
     const R = new AFRAME.THREE.Raycaster();
     const NDC = new AFRAME.THREE.Vector2();
-
     function canvasEl(){ return scene.canvas || document.querySelector('canvas.a-canvas'); }
     function setNDCFromEvent(e){
       const c = canvasEl(); if(!c) return;
@@ -381,7 +444,6 @@
       return res && res[0] || null;
     }
     function worldToRoot(vec3){ const p=vec3.clone(); root.object3D.worldToLocal(p); return p; }
-
     function pointerOnPlane(e){
       setNDCFromEvent(e);
       const hit = intersectObj3D(dragPlane.object3D);
@@ -392,7 +454,6 @@
 
     function removeHeartObj(obj){
       if(!obj || !obj.el) return;
-      // pequeño fade antes de eliminar
       obj.el.setAttribute('animation__fade','property: material.opacity; from:1; to:0; dur:220; easing:easeOutQuad');
       obj.el.addEventListener('animationcomplete__fade', ()=>{ obj.el.remove(); }, {once:true});
     }
@@ -408,11 +469,8 @@
       root.appendChild(h);
       setRO(h, 140, false, false);
       hearts.push({ el:h, x, y, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3 });
-
-      // limitar a 10: borrar el más antiguo con fade
       while(hearts.length > MAX_HEARTS){
-        const old = hearts.shift();
-        removeHeartObj(old);
+        const old = hearts.shift(); removeHeartObj(old);
       }
     }
 
@@ -427,7 +485,6 @@
       return hearts.find(h=>h.el===el) || null;
     }
 
-    // Gestos (SOLO pointer events → nada de touchstart/click)
     let dragging=null, dragOffset={x:0,y:0}, lastTime=0;
 
     function beginDrag(h, e){
@@ -465,11 +522,9 @@
       c.addEventListener('pointerdown', onDown, {passive:true});
       c.addEventListener('pointermove', onMove, {passive:true});
       window.addEventListener('pointerup', onUp, {passive:true});
-      // NO touchstart/click → evita duplicados
     }
     addCanvasListeners();
 
-    // Física
     (function heartsTick(){
       const dt=1/60, g=-0.4, damp=0.60;
       for(const o of hearts){
@@ -484,7 +539,6 @@
       requestAnimationFrame(heartsTick);
     })();
   })();
-
 
   /* ---------- botón cámara ---------- */
   async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true})); }
@@ -507,12 +561,7 @@
     try{
       btnStart.disabled=true; btnStart.textContent='Preparando…'; log('Pidiendo cámara…');
       const s=await navigator.mediaDevices.getUserMedia({
-        video:{
-          facingMode:{ideal:'environment'},
-          width:{ideal:960, max:1280},
-          height:{ideal:540, max:720},
-          frameRate:{ideal:30, max:30}
-        },
+        video:{ facingMode:{ideal:'environment'}, width:{ideal:960,max:1280}, height:{ideal:540,max:720}, frameRate:{ideal:30,max:30} },
         audio:false
       });
       s.getTracks().forEach(t=>t.stop());
@@ -527,25 +576,23 @@
     }
   };
 
-  /* ---------- eventos de target + ahorro ---------- */
+  /* ---------- eventos target + ahorro ---------- */
+  let shouldDraw=true;
   anchor.addEventListener('targetFound', async ()=>{
     shouldDraw = true;
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
     setupAudio();
     try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
-    btnAudio.disabled=false;
+    document.getElementById('btnAudio').disabled=false;
     log('Target FOUND');
   });
   anchor.addEventListener('targetLost', ()=>{
     shouldDraw = false;
-    v1.pause(); audio?.pause(); btnAudio.textContent='▶️ Audio'; log('Target LOST…');
+    v1.pause(); audio?.pause(); document.getElementById('btnAudio').textContent='▶️ Audio'; log('Target LOST…');
   });
+  document.addEventListener('visibilitychange', ()=>{ if (document.hidden){ shouldDraw=false; audio?.pause(); } else { shouldDraw=true; } });
 
-  document.addEventListener('visibilitychange', ()=>{
-    if (document.hidden){ shouldDraw=false; audio?.pause(); }
-    else { shouldDraw=true; }
-  });
-
+  // iOS: primer gesto ayuda a media
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); if(!scene.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
 })();
 </script>
