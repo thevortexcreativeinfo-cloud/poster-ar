@@ -36,8 +36,7 @@
   device-orientation-permission-ui="enabled:true"
   renderer="alpha:true; antialias:false; sortTransparentObjects:true; logarithmicDepthBuffer:false"
   loading-screen="enabled:false"
-  mindar-image="uiLoading:false; uiScanning:false; autoStart:false; maxTrack:1;
-                warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
+  mindar-image="uiLoading:true; uiScanning:true; autoStart:false; maxTrack:1; filterMinCF:0.0001; filterBeta:0.006;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
@@ -79,6 +78,7 @@ AFRAME.registerComponent('smooth-follow',{
   const qs  = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  let shouldDraw = true; // única declaración
 
   // Mantener vídeo de cámara detrás con cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
@@ -87,7 +87,7 @@ AFRAME.registerComponent('smooth-follow',{
     }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  /* ---------- Cargar CFG y target .mind como BLOB ---------- */
+  /* ---------- Cargar CFG ---------- */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
 
@@ -95,24 +95,14 @@ AFRAME.registerComponent('smooth-follow',{
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  let targetURL;
-  try{
-    const r = await fetch(CFG.target,{mode:'cors',cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const blob = await r.blob();
-    targetURL = URL.createObjectURL(blob);
-  }catch(e){
-    log('⚠️ Target vía blob falló, uso URL original.');
-    targetURL = CFG.target;
-  }
-
   const scene    = document.getElementById('scene');
   const anchor   = document.getElementById('anchor');
   const smoother = document.getElementById('smoother');
   const hint     = document.getElementById('hint');
 
+  // Configurar YA la ruta del .mind (HTTPS directa)
   scene.setAttribute('mindar-image',
-    `imageTargetSrc:${targetURL}; uiLoading:false; uiScanning:false; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;`
+    `imageTargetSrc:${CFG.target}; uiLoading:true; uiScanning:true; autoStart:false; maxTrack:1; filterMinCF:0.0001; filterBeta:0.006;`
   );
 
   /* ---------- Root de contenidos (dentro del smoother) ---------- */
@@ -262,12 +252,10 @@ AFRAME.registerComponent('smooth-follow',{
     return Math.sqrt(sum/arr.length);
   }
 
-  /* ---------- Draw loop + anim del marco ---------- */
   const BARS_MAX=64; let BARS_CURRENT=48;
   const levels=new Array(BARS_MAX).fill(0), peaks=new Array(BARS_MAX).fill(0);
   let waveHBase = Math.round(36*Cw/2048), gapBase = Math.round(24*Cw/2048);
   let lastDrawTS=0, fpsAvg=60, fpsTS=performance.now();
-  let shouldDraw=true; // única declaración
 
   function maybeAdapt(ts){
     const dt=ts - fpsTS; fpsTS = ts;
@@ -359,7 +347,7 @@ AFRAME.registerComponent('smooth-follow',{
     // espectro doble
     if (analyser && freqArr && (anaSkip % 2 === 0)) analyser.getByteFrequencyData(freqArr);
     const arr = freqArr;
-    const step=pbw/BARS_CURRENT, yTop=pby - gap, yBot=pby + pbh + gap;
+    const step=pbw/BARS_CURRENT, yTop=pby - Math.round(24*Cw/2048), yBot=pby + pbh + Math.round(24*Cw/2048);
     const tnow = performance.now();
     const sweepX = pbx + ((Math.sin(tnow/900)+1)/2)*pbw;
 
@@ -375,8 +363,8 @@ AFRAME.registerComponent('smooth-follow',{
 
         const x = Math.round(pbx + i*step + step*0.18);
         const w = Math.max(2, Math.round(step*0.64));
-        const h = Math.max(3, Math.round(levels[i]*waveH));
-        const peakY = Math.max(4, Math.round(peaks[i]*waveH));
+        const h = Math.max(3, Math.round(levels[i]*Math.round(36*Cw/2048)));
+        const peakY = Math.max(4, Math.round(peaks[i]*Math.round(36*Cw/2048)));
 
         const dist = Math.abs((x+w/2) - sweepX);
         const glow = Math.max(0, 1 - dist/120);
@@ -406,7 +394,7 @@ AFRAME.registerComponent('smooth-follow',{
   }
   requestAnimationFrame(draw);
 
-  /* ---------- Corazones (tap, drag, máx 10, sin duplicados) ---------- */
+  /* ---------- Corazones (tap, drag, máx 10) ---------- */
   (() => {
     const MAX_HEARTS = 10;
     const hearts = []; // {el,x,y,vx,vy}
@@ -488,7 +476,6 @@ AFRAME.registerComponent('smooth-follow',{
       lastTime = performance.now();
     }
 
-    // SOLO pointerdown/move/up → evita doble click/tap
     const onDown = (e) => {
       const h = pickHeart(e);
       if(h){ beginDrag(h, e); }
@@ -534,7 +521,7 @@ AFRAME.registerComponent('smooth-follow',{
     })();
   })();
 
-  /* ---------- Arranque MindAR (fallbacks + watchdog) ---------- */
+  /* ---------- Arranque MindAR ---------- */
   async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true})); }
   async function waitMindARReady(){
     if(scene.components['mindar-image']) return;
@@ -590,7 +577,7 @@ AFRAME.registerComponent('smooth-follow',{
   anchor.addEventListener('targetFound', async ()=>{
     shouldDraw = true;
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
-    setupAudio();
+    if(!audio) setupAudio();
     try{ (window.acx && acx.state==='suspended') && await acx.resume(); }catch{}
     document.getElementById('btnAudio').disabled=false;
     hint.classList.remove('show');
@@ -609,9 +596,6 @@ AFRAME.registerComponent('smooth-follow',{
     v1.play().catch(()=>{});
     if(!scene.systems['mindar-image-system']?.active) btnStart.click();
   }, {once:true,passive:true});
-
-  // Limpieza del blob
-  window.addEventListener('unload', ()=>{ try{ targetURL && targetURL.startsWith('blob:') && URL.revokeObjectURL(targetURL); }catch{} });
 })();
 </script>
 </body>
