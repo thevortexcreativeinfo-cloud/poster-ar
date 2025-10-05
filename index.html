@@ -28,14 +28,14 @@
 
 <a-scene id="scene"
   embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
-  renderer="alpha:true; antialias:false; precision:mediump; powerPreference:high-performance; sortObjects:true; logarithmicDepthBuffer:false"
+  renderer="alpha:true; antialias:false; sortTransparentObjects:true; logarithmicDepthBuffer:false"
   loading-screen="enabled:false"
   mindar-image="uiLoading: yes; autoStart:false; maxTrack:1;
                 warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous"></video>
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" src="about:blank"></video>
     <!-- Textura del corazón pre-cargada -->
     <img id="heartImg" crossorigin="anonymous"
          src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>'>
@@ -116,7 +116,7 @@ AFRAME.registerComponent('smooth-follow',{
   const anchor=document.getElementById('anchor');
   const smoother=document.getElementById('smoother');
 
-  // TODO: contenido va dentro de "root" que cuelga del smoother (no del anchor directo).
+  // Contenido: cuelga del smoother (no del anchor).
   const root=document.createElement('a-entity'); smoother.appendChild(root);
   const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
   root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
@@ -154,7 +154,7 @@ AFRAME.registerComponent('smooth-follow',{
   frameNice.setAttribute('material', 'shader:flat; color:#e9eef2; side:double; transparent:true; opacity:1');
   root.appendChild(frameNice); setRO(frameNice, 80, false, false);
 
-  // Glow exterior que modularemos con el audio (solo opacidad)
+  // Glow exterior (modulado con audio)
   const frameGlow=document.createElement('a-plane');
   frameGlow.setAttribute('width', u.wn*1.12);
   frameGlow.setAttribute('height', u.hn*1.12);
@@ -268,7 +268,9 @@ AFRAME.registerComponent('smooth-follow',{
   const BARS_MAX=64; let BARS_CURRENT=48;
   const levels=new Array(BARS_MAX).fill(0), peaks=new Array(BARS_MAX).fill(0);
   let waveHBase = Math.round(36*Cw/2048), gapBase = Math.round(24*Cw/2048);
-  let lastDrawTS=0, shouldDraw=true, fpsAvg=60, fpsTS=performance.now();
+  let lastDrawTS=0, fpsAvg=60, fpsTS=performance.now();
+  let shouldDraw=false; // ✅ única declaración
+
   function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
 
   function maybeAdapt(ts){
@@ -290,10 +292,8 @@ AFRAME.registerComponent('smooth-follow',{
   // brillo (glow) y shine del marco
   let shinePhase=0; // 0..1
   function animateFrameVisuals(ts){
-    // audio → pulso de glow (opacidad) + leve escala del marco claro
     let amp=0.0;
     if(analyser && timeArr && (anaSkip++ % 2 === 0)){ analyser.getByteTimeDomainData(timeArr); amp = rmsFromTimeDomain(timeArr); }
-    // suavizado del amp para que no parpadee
     animateFrameVisuals._amp = animateFrameVisuals._amp? (animateFrameVisuals._amp*0.85 + amp*0.15) : amp;
     const A = animateFrameVisuals._amp || 0;
 
@@ -304,10 +304,10 @@ AFRAME.registerComponent('smooth-follow',{
     frameNice.setAttribute('scale', `${scalePulse} ${scalePulse} 1`);
 
     // Shine: cruza cada ~6s
-    const speed= (Math.sin(ts/6000)*0.5+0.5)*0.00035 + 0.00025; // variación sutil
+    const speed= (Math.sin(ts/6000)*0.5+0.5)*0.00035 + 0.00025;
     shinePhase=(shinePhase+speed) % 1;
     const x = (u.cx - u.wn*0.65) + shinePhase*(u.wn*1.30);
-    const fade = (shinePhase<0.08 || shinePhase>0.92)? 0 : 0.18; // aparece/desaparece suave en extremos
+    const fade = (shinePhase<0.08 || shinePhase>0.92)? 0 : 0.18;
     frameShine.setAttribute('position', `${x} ${u.cy} 0.0195`);
     frameShine.setAttribute('material', `transparent:true; opacity:${fade}; side:double; depthTest:false; depthWrite:false`);
   }
@@ -577,7 +577,6 @@ AFRAME.registerComponent('smooth-follow',{
   };
 
   /* ---------- eventos target + ahorro ---------- */
-  let shouldDraw=true;
   anchor.addEventListener('targetFound', async ()=>{
     shouldDraw = true;
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
@@ -590,7 +589,10 @@ AFRAME.registerComponent('smooth-follow',{
     shouldDraw = false;
     v1.pause(); audio?.pause(); document.getElementById('btnAudio').textContent='▶️ Audio'; log('Target LOST…');
   });
-  document.addEventListener('visibilitychange', ()=>{ if (document.hidden){ shouldDraw=false; audio?.pause(); } else { shouldDraw=true; } });
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden){ shouldDraw=false; audio?.pause(); }
+    else { shouldDraw=true; }
+  });
 
   // iOS: primer gesto ayuda a media
   window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); if(!scene.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
