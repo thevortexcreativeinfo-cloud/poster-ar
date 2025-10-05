@@ -8,16 +8,21 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
-  /* Cámara detrás (solo cuando sea stream de cámara) */
+  /* Cámara detrás */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
+  /* WebGL delante */
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
   canvas.a-canvas{position:fixed!important;inset:0!important;z-index:4!important;pointer-events:auto!important}
+  /* UI */
   .ui{position:fixed;left:8px;top:8px;display:flex;gap:8px;z-index:9}
   .btn{border:1px solid #2a3a58;background:#0f1522;color:#eaf2ff;border-radius:10px;padding:8px 10px}
   .dbg{position:fixed;right:8px;top:8px;background:#0f1522cc;border:1px solid #22324d;border-radius:8px;
        padding:8px 10px;color:#cfe3ff;font:12px/1.3 system-ui;z-index:8;pointer-events:none;opacity:.16;transition:opacity .35s}
   .dbg:hover{opacity:1}
+  .overlayNote{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9;
+    background:#0f1522cc;color:#cfe3ff;border:1px solid #22324d;border-radius:12px;padding:8px 12px;font:13px/1.3 system-ui;display:none}
+  .overlayNote.show{display:block}
 </style>
 </head>
 <body>
@@ -26,6 +31,7 @@
   <button id="btnAudio" class="btn" type="button" disabled>▶️ Audio</button>
 </div>
 <div id="dbg" class="dbg">Listo…</div>
+<div id="hint" class="overlayNote">Apunta al póster para empezar</div>
 
 <a-scene id="scene"
   embedded
@@ -33,11 +39,12 @@
   device-orientation-permission-ui="enabled:true"
   renderer="alpha:true; antialias:false; sortTransparentObjects:true; logarithmicDepthBuffer:false"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
+  mindar-image="uiLoading:false; uiScanning:false; autoStart:false; maxTrack:1;
+                warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <!-- 🔧 SIN src inicial para evitar CORS con about:blank -->
+    <!-- ¡OJO! Sin src inicial para evitar about:blank/CORS -->
     <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="metadata" crossorigin="anonymous"></video>
   </a-assets>
 
@@ -50,29 +57,48 @@
   const qs  = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  /* Detecta el <video> de cámara y lo deja a pantalla completa detrás */
+  // Mantener el <video> de la cámara detrás en cover
   new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
     if(v.srcObject instanceof MediaStream){
       Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
     }
   });}).observe(document.documentElement,{subtree:true,childList:true});
 
-  /* ---------- carga CFG ---------- */
+  /* ---------- Cargar CFG + PRE-CARGAR TARGET (.mind) COMO BLOB ---------- */
   const cfgUrl = qs.get('cfg');
   if(!cfgUrl){ log('Falta ?cfg=URL_DEL_JSON'); return; }
+
   let CFG;
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
+  // Pre-carga del .mind → Blob URL (evita CORS y bloqueos del UI nativo)
+  let targetURL = null;
+  try{
+    const r = await fetch(CFG.target, {mode:'cors',cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const blob = await r.blob();
+    targetURL = URL.createObjectURL(blob);
+  }catch(e){
+    log('❗ No pude cargar el target .mind ('+(e.message||e)+')');
+    // seguimos con la URL original como fallback
+    targetURL = CFG.target;
+  }
+
   const scene  = document.getElementById('scene');
   const anchor = document.getElementById('anchor');
+  const hint   = document.getElementById('hint');
 
-  /* ---------- dimensiones poster ---------- */
+  // Inyectar el imageTargetSrc ya resuelto
+  scene.setAttribute('mindar-image',
+    `imageTargetSrc:${targetURL}; uiLoading:false; uiScanning:false; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;`
+  );
+
+  /* ---------- Póster / vídeo mínimo (lo esencial para esta corrección) ---------- */
   const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
   const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
 
-  /* ---------- raíz del contenido ---------- */
   const root=document.createElement('a-entity'); anchor.appendChild(root);
   root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
@@ -86,37 +112,34 @@
     });
   }
 
-  /* ---------- fondo póster ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
-  paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
+  paper.setAttribute('material','shader:flat; color:#ffffff; side:double');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- slot de vídeo ---------- */
+  // Marco simple
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
-
-  // Marco simple (bonito y ligero)
   const frame=document.createElement('a-plane');
   frame.setAttribute('width',u.wn*1.04);
   frame.setAttribute('height',u.hn*1.04);
   frame.setAttribute('position',`${u.cx} ${u.cy} 0.018`);
-  frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
+  frame.setAttribute('material','shader:flat; color:#e9eef2; side:double');
   root.appendChild(frame); setRO(frame, 60, false, false);
 
-  /* ---------- vídeo del cliente ---------- */
+  // Vídeo
   const v1=document.getElementById('v1');
   v1.crossOrigin='anonymous';
   v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || '';  // ✅ asignamos aquí, NO about:blank
+  v1.src = CFG.video || '';
   v1.load();
 
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn);
   vPlane.setAttribute('height',u.hn);
   vPlane.setAttribute('position',`${u.cx} ${u.cy} 0.02`);
-  vPlane.setAttribute('material','shader:flat; side:double; transparent:false; src:#v1');
+  vPlane.setAttribute('material','shader:flat; side:double; src:#v1');
   root.appendChild(vPlane); setRO(vPlane, 100, true, true);
 
   function coverFromMap(map){
@@ -146,7 +169,7 @@
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   }
 
-  /* ---------- botón cámara con fallbacks ---------- */
+  /* ---------- Arranque MindAR con fallbacks y watchdog ---------- */
   async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true})); }
   async function waitMindARReady(){
     if(scene.components['mindar-image']) return;
@@ -159,7 +182,9 @@
     const comp=scene.components['mindar-image'];
     const sys =scene.systems['mindar-image-system'];
     if(sys?.active) return;
-    if(comp?.start) await comp.start(); else if(sys?.start) await sys.start(); else throw new Error('No MindAR start method');
+    if(comp?.start) return comp.start();
+    if(sys?.start)  return sys.start();
+    throw new Error('No MindAR start method');
   }
 
   async function tryOpenCamera(){
@@ -173,41 +198,62 @@
     for(const c of attempts){
       try{
         const s=await navigator.mediaDevices.getUserMedia(c);
-        s.getTracks().forEach(t=>t.stop()); // solo probamos disponibilidad
+        s.getTracks().forEach(t=>t.stop());
         return true;
       }catch(e){ lastErr=e; }
     }
     throw lastErr || new Error('No camera available');
   }
 
+  // Eventos MindAR para diagnosticar el “loading”
+  scene.addEventListener('arReady', ()=>{ log('MindAR listo'); hint.classList.add('show'); setTimeout(()=>hint.classList.remove('show'), 1800); });
+  scene.addEventListener('arError', (e)=>{ log('MindAR ERROR: '+(e.detail?.message||'')); alert('No se pudo iniciar AR. Revisa permisos de cámara y vuelve a intentar.'); });
+
   const btnStart=document.getElementById('btnStart');
+
   btnStart.onclick=async()=>{
     try{
       btnStart.disabled=true; btnStart.textContent='Preparando…'; log('Pidiendo cámara…');
 
-      await tryOpenCamera();              // ✅ hace los fallbacks
+      // 1) Asegura permisos/disp. (con fallbacks)
+      await tryOpenCamera();
+
+      // 2) Carga escena + componente MindAR
       await waitSceneLoaded();
       await waitMindARReady();
-      await startMindAROnce();
 
-      btnStart.textContent='Cámara lista';
-      log('Cámara iniciada');
+      // 3) Start MindAR
+      log('Iniciando detector…');
+      await startMindAROnce();
+      btnStart.textContent='Detectando…';
+
+      // 4) Watchdog: si en 8s no llega arReady, reintenta una vez
+      let ready = false, timer = setTimeout(async ()=>{
+        if(ready) return;
+        log('Watchdog: reintentando arranque…');
+        try{ await startMindAROnce(); }catch(e){}
+      }, 8000);
+      scene.addEventListener('arReady', ()=>{ ready=true; clearTimeout(timer); btnStart.textContent='Cámara lista'; }, {once:true});
+
     }catch(e){
       btnStart.disabled=false; btnStart.textContent='📷 Abrir cámara';
-      log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+      log(`No se pudo iniciar la cámara/AR (${e.name||''} ${e.message||e})`);
       if(e && e.name==='NotFoundError'){
-        alert('No se encontró ninguna cámara disponible o está en uso. Revisa permisos del navegador/OS y vuelve a intentar.');
+        alert('No se encontró cámara disponible o está en uso por otra app. Revisa permisos del navegador/OS.');
       }
     }
   };
 
-  /* ---------- eventos de target ---------- */
+  /* ---------- target events ---------- */
   anchor.addEventListener('targetFound', async ()=>{
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
+    hint.classList.remove('show');
     log('Target FOUND');
   });
   anchor.addEventListener('targetLost', ()=>{
     v1.pause();
+    hint.textContent='Apunta al póster para continuar';
+    hint.classList.add('show');
     log('Target LOST…');
   });
 
@@ -216,6 +262,9 @@
     v1.play().catch(()=>{});
     if(!scene.systems['mindar-image-system']?.active) btnStart.click();
   }, {once:true,passive:true});
+
+  // Limpieza del blob al salir
+  window.addEventListener('unload', ()=>{ try{ targetURL && targetURL.startsWith('blob:') && URL.revokeObjectURL(targetURL); }catch{} });
 })();
 </script>
 </body>
