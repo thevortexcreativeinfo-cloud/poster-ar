@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000}
+  /* Cámara detrás (solo cuando sea stream de cámara) */
   video[playsinline]{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
     object-fit:cover!important;z-index:0!important;background:#000!important}
   a-scene{position:fixed!important;inset:0!important;z-index:3!important;pointer-events:auto!important}
@@ -27,70 +28,34 @@
 <div id="dbg" class="dbg">Listo…</div>
 
 <a-scene id="scene"
-  embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:true"
+  embedded
+  vr-mode-ui="enabled:false"
+  device-orientation-permission-ui="enabled:true"
   renderer="alpha:true; antialias:false; sortTransparentObjects:true; logarithmicDepthBuffer:false"
   loading-screen="enabled:false"
-  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1;
-                warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
+  mindar-image="uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;"
   style="width:100vw;height:100vh">
 
   <a-assets timeout="60000">
-    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="auto" crossorigin="anonymous" src="about:blank"></video>
-    <!-- Textura del corazón pre-cargada -->
-    <img id="heartImg" crossorigin="anonymous"
-         src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="%23ff3b61" d="M47.5 6c-5 0-8.8 3-15.5 10C25.3 9 21.5 6 16.5 6 9 6 4 11.8 4 19.2 4 33.7 23.1 43.4 32 58c8.9-14.6 28-24.3 28-38.8C60 11.8 55 6 47.5 6z"/></svg>'>
-    <!-- Shine del marco -->
-    <img id="shineImg" crossorigin="anonymous"
-         src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="256" height="64" viewBox="0 0 256 64"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="white" stop-opacity="0"/><stop offset="0.5" stop-color="white" stop-opacity="0.28"/><stop offset="1" stop-color="white" stop-opacity="0"/></linearGradient></defs><rect width="256" height="64" fill="url(%23g)"/></svg>'>
+    <!-- 🔧 SIN src inicial para evitar CORS con about:blank -->
+    <video id="v1" playsinline webkit-playsinline muted autoplay loop preload="metadata" crossorigin="anonymous"></video>
   </a-assets>
 
-  <!-- Anchor bruto de MindAR -->
-  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
-  <!-- Smoother que sigue al anchor con suavizado -->
-  <a-entity id="smoother" smooth-follow="target: #anchor; lerpPos:0.35; slerpRot:0.35; lerpScale:0.35"></a-entity>
-
   <a-camera id="cam" look-controls="enabled:false"></a-camera>
+  <a-entity id="anchor" mindar-image-target="targetIndex:0"></a-entity>
 </a-scene>
 
 <script>
-/* ---------- Componente de suavizado para eliminar jitter ---------- */
-AFRAME.registerComponent('smooth-follow',{
-  schema:{ target:{type:'selector'}, lerpPos:{default:0.35}, slerpRot:{default:0.35}, lerpScale:{default:0.35} },
-  init(){
-    this.t=new AFRAME.THREE.Vector3();
-    this.q=new AFRAME.THREE.Quaternion();
-    this.s=new AFRAME.THREE.Vector3(1,1,1);
-    this._p=new AFRAME.THREE.Vector3();
-    this._q=new AFRAME.THREE.Quaternion();
-    this._s=new AFRAME.THREE.Vector3(1,1,1);
-  },
-  tick(){
-    const tgt=this.data.target; if(!tgt) return;
-    tgt.object3D.updateMatrixWorld();
-    tgt.object3D.matrixWorld.decompose(this.t,this.q,this.s);
-    const o=this.el.object3D;
-    o.position.lerpVectors(o.position,this.t,this.data.lerpPos);
-    o.quaternion.slerpQuaternions(o.quaternion,this.q,this.data.slerpRot);
-    this._s.copy(o.scale).lerp(this.s,this.data.lerpScale); o.scale.copy(this._s);
-  }
-});
-
 (async function(){
-  const qs = new URLSearchParams(location.search);
+  const qs  = new URLSearchParams(location.search);
   const log = m => { const el=document.getElementById('dbg'); el.textContent = m+' · '+new Date().toLocaleTimeString(); el.style.opacity=.9; setTimeout(()=>el.style.opacity=.16,1200); console.log('[AR]',m); };
 
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-
-  /* ---------- patch gUM ---------- */
-  if(navigator.mediaDevices?.getUserMedia){
-    const _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    navigator.mediaDevices.getUserMedia = (c)=>_orig(c).catch(err=>{
-      if(err?.name==='NotFoundError' || err?.name==='OverconstrainedError'){
-        return _orig({video:true,audio:false});
-      }
-      throw err;
-    });
-  }
+  /* Detecta el <video> de cámara y lo deja a pantalla completa detrás */
+  new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
+    if(v.srcObject instanceof MediaStream){
+      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
+    }
+  });}).observe(document.documentElement,{subtree:true,childList:true});
 
   /* ---------- carga CFG ---------- */
   const cfgUrl = qs.get('cfg');
@@ -99,31 +64,20 @@ AFRAME.registerComponent('smooth-follow',{
   try{ CFG = await (await fetch(cfgUrl,{mode:'cors',cache:'no-store'})).json(); }
   catch(e){ log('❗ No pude cargar el JSON'); return; }
 
-  /* ---------- escena + smoother ---------- */
-  const scene = document.getElementById('scene');
-  scene.setAttribute('mindar-image',
-    `imageTargetSrc:${CFG.target}; uiLoading: yes; autoStart:false; maxTrack:1; warmupTolerance:3; missTolerance:6; filterMinCF:0.0015; filterBeta:0.005;`);
+  const scene  = document.getElementById('scene');
+  const anchor = document.getElementById('anchor');
 
-  new MutationObserver(()=>{ document.querySelectorAll('video').forEach(v=>{
-    if(v.srcObject instanceof MediaStream){
-      Object.assign(v.style,{objectFit:'cover',position:'fixed',inset:'0',width:'100vw',height:'100vh',zIndex:'0',background:'#000'});
-    }
-  });}).observe(document.documentElement,{subtree:true,childList:true});
-
+  /* ---------- dimensiones poster ---------- */
   const PW=CFG.pw||2481, PH=CFG.ph||3508, H=PH/PW;
   const px2=(x,y,w,h)=>({wn:w/PW, hn:h/PW, cx:-0.5+(x+w/2)/PW, cy:H/2-(y+h/2)/PW});
-
-  const anchor=document.getElementById('anchor');
-  const smoother=document.getElementById('smoother');
-
-  // Contenido: cuelga del smoother (no del anchor).
-  const root=document.createElement('a-entity'); smoother.appendChild(root);
   const cal=Object.assign({dx:0,dy:0,scale:1,rot:0}, CFG.cal||{});
+
+  /* ---------- raíz del contenido ---------- */
+  const root=document.createElement('a-entity'); anchor.appendChild(root);
   root.setAttribute('position', `${cal.dx/PW} ${-cal.dy/PW} 0`);
   root.setAttribute('scale', `${cal.scale} ${cal.scale} 1`);
   root.setAttribute('rotation', `0 0 ${cal.rot}`);
 
-  /* ---------- fondo póster ---------- */
   function setRO(el, order, depthTest, depthWrite){
     el.addEventListener('loaded', ()=>{
       const mesh = el.getObject3D('mesh'); if(!mesh) return;
@@ -131,51 +85,32 @@ AFRAME.registerComponent('smooth-follow',{
       if(mesh.material){ mesh.material.depthTest=!!depthTest; mesh.material.depthWrite=!!depthWrite; mesh.material.needsUpdate=true; }
     });
   }
+
+  /* ---------- fondo póster ---------- */
   const paper=document.createElement('a-plane');
   paper.setAttribute('width',1); paper.setAttribute('height',H);
   paper.setAttribute('position','0 0 -0.02');
   paper.setAttribute('material','shader:flat; color:#ffffff; side:double; transparent:false');
   root.appendChild(paper); setRO(paper, 1, false, false);
 
-  /* ---------- slot & marco bonito ---------- */
+  /* ---------- slot de vídeo ---------- */
   const vslot=CFG.slotVid, u=px2(vslot.x,vslot.y,vslot.w,vslot.h);
 
-  const frameMat=document.createElement('a-plane'); // paspartú oscuro
-  frameMat.setAttribute('width', u.wn*1.08);
-  frameMat.setAttribute('height', u.hn*1.08);
-  frameMat.setAttribute('position', `${u.cx} ${u.cy} 0.017`);
-  frameMat.setAttribute('material', 'shader:flat; color:#0f1522; side:double; transparent:false');
-  root.appendChild(frameMat); setRO(frameMat, 60, false, false);
+  // Marco simple (bonito y ligero)
+  const frame=document.createElement('a-plane');
+  frame.setAttribute('width',u.wn*1.04);
+  frame.setAttribute('height',u.hn*1.04);
+  frame.setAttribute('position',`${u.cx} ${u.cy} 0.018`);
+  frame.setAttribute('material','shader:flat; color:#e9eef2; side:double; transparent:false');
+  root.appendChild(frame); setRO(frame, 60, false, false);
 
-  const frameNice=document.createElement('a-plane'); // marco claro
-  frameNice.setAttribute('width', u.wn*1.035);
-  frameNice.setAttribute('height', u.hn*1.035);
-  frameNice.setAttribute('position', `${u.cx} ${u.cy} 0.0185`);
-  frameNice.setAttribute('material', 'shader:flat; color:#e9eef2; side:double; transparent:true; opacity:1');
-  root.appendChild(frameNice); setRO(frameNice, 80, false, false);
-
-  // Glow exterior (modulado con audio)
-  const frameGlow=document.createElement('a-plane');
-  frameGlow.setAttribute('width', u.wn*1.12);
-  frameGlow.setAttribute('height', u.hn*1.12);
-  frameGlow.setAttribute('position', `${u.cx} ${u.cy} 0.0165`);
-  frameGlow.setAttribute('material', 'shader:flat; color:#ffffff; side:double; transparent:true; opacity:0');
-  root.appendChild(frameGlow); setRO(frameGlow, 50, false, false);
-
-  // Shine que cruza el marco
-  const frameShine=document.createElement('a-image');
-  frameShine.setAttribute('src','#shineImg');
-  frameShine.setAttribute('width', u.wn*0.45);
-  frameShine.setAttribute('height', u.hn*0.18);
-  frameShine.setAttribute('position', `${u.cx - u.wn*0.6} ${u.cy} 0.0195`);
-  frameShine.setAttribute('material','transparent:true; opacity:0.0; side:double; depthTest:false; depthWrite:false');
-  root.appendChild(frameShine); setRO(frameShine, 95, false, false);
-
-  /* ---------- vídeo ---------- */
+  /* ---------- vídeo del cliente ---------- */
   const v1=document.getElementById('v1');
-  v1.crossOrigin='anonymous'; v1.muted=true; v1.playsInline=true;
+  v1.crossOrigin='anonymous';
+  v1.muted=true; v1.playsInline=true;
   v1.setAttribute('playsinline','true'); v1.setAttribute('webkit-playsinline','true');
-  v1.src = CFG.video || ''; v1.load();
+  v1.src = CFG.video || '';  // ✅ asignamos aquí, NO about:blank
+  v1.load();
 
   const vPlane=document.createElement('a-plane');
   vPlane.setAttribute('width',u.wn);
@@ -211,336 +146,7 @@ AFRAME.registerComponent('smooth-follow',{
     if(!v1.videoWidth || !map) forceThreeVideoTexture();
   }
 
-  /* ---------- overlay canvas (texto + barra) con throttle adaptativo ---------- */
-  const DPR = Math.min(window.devicePixelRatio||1, 1.5);
-  let   Cw  = Math.round(1600 * DPR);
-  let   Ch  = Math.round(Cw * H);
-  const canvas=document.createElement('canvas'); canvas.width=Cw; canvas.height=Ch;
-  const ctx=canvas.getContext('2d');
-
-  const overlay=document.createElement('a-plane');
-  overlay.setAttribute('width',1); overlay.setAttribute('height',H);
-  overlay.setAttribute('position','0 0 0.0');
-  overlay.setAttribute('material','shader:flat; transparent:true; side:double; opacity:1');
-  root.appendChild(overlay); setRO(overlay, 3, false, false);
-  overlay.addEventListener('loaded', ()=>{
-    const tex=new AFRAME.THREE.CanvasTexture(canvas); tex.needsUpdate=true;
-    const m=overlay.getObject3D('mesh'); m.material.map=tex; m.material.needsUpdate=true; overlay.__tex=tex;
-  });
-
-  const PW_=PW, PH_=PH;
-  function px(n, axis){ return axis==='x' ? Math.round(n*Cw/PW_) : Math.round(n*Ch/PH_); }
-
-  const titleSlot=CFG.slotTitle, artistSlot=CFG.slotArtist, barSlot=CFG.slotBar;
-  function fitFontFor(text,wpx,hpx,weight){ let lo=12,hi=Math.floor(hpx*0.92),best=Math.floor(hpx*0.74); while(lo<=hi){ const mid=(lo+hi>>1); ctx.font=`${weight||700} ${mid}px system-ui,Segoe UI,Roboto`; (ctx.measureText(text).width<=wpx*0.94)?(best=mid,lo=mid+1):(hi=mid-1);} return best; }
-  const titlePx=fitFontFor(CFG.title||'', px(titleSlot.w,'x'), px(titleSlot.h,'y'), 800);
-  const artistPx=fitFontFor(CFG.artist||'', px(artistSlot.w,'x'), px(artistSlot.h,'y'), 600);
-
-  /* ---------- audio + analyser ---------- */
-  const btnAudio=document.getElementById('btnAudio');
-  let audio=null, acx=null, analyser=null, freqArr=null, timeArr=null, anaSkip=0;
-  function setupAudio(){
-    if(audio) return;
-    audio=new Audio(CFG.audio||''); audio.crossOrigin='anonymous'; audio.preload='auto';
-    try{
-      const AC=window.AudioContext||window.webkitAudioContext;
-      acx=new AC();
-      analyser=acx.createAnalyser();
-      analyser.fftSize=128;
-      analyser.smoothingTimeConstant=0.88;
-      const src=acx.createMediaElementSource(audio);
-      src.connect(analyser); analyser.connect(acx.destination);
-      freqArr = new Uint8Array(analyser.frequencyBinCount);
-      timeArr = new Uint8Array(analyser.fftSize);
-    }catch{}
-    audio.addEventListener('play', ()=>btnAudio.textContent='⏸ Audio');
-    audio.addEventListener('pause',()=>btnAudio.textContent='▶️ Audio');
-  }
-  btnAudio.onclick=async()=>{ setupAudio(); try{ if(audio.paused){ acx&&acx.state==='suspended'&&await acx.resume(); await audio.play(); } else { audio.pause(); } }catch{} };
-
-  function rmsFromTimeDomain(arr){
-    if(!arr||!arr.length) return 0;
-    let sum=0; for(let i=0;i<arr.length;i++){ const v=(arr[i]-128)/128; sum+=v*v; }
-    return Math.sqrt(sum/arr.length); // 0..~1
-  }
-
-  /* ---------- draw (30 FPS adaptativo) + anim marco/audio ---------- */
-  const BARS_MAX=64; let BARS_CURRENT=48;
-  const levels=new Array(BARS_MAX).fill(0), peaks=new Array(BARS_MAX).fill(0);
-  let waveHBase = Math.round(36*Cw/2048), gapBase = Math.round(24*Cw/2048);
-  let lastDrawTS=0, fpsAvg=60, fpsTS=performance.now();
-  let shouldDraw=false; // ✅ única declaración
-
-  function mmss(t){ if(!isFinite(t)||t<0) t=0; const m=Math.floor(t/60), s=Math.floor(t%60); return `${m}:${s.toString().padStart(2,'0')}`; }
-
-  function maybeAdapt(ts){
-    const dt=ts - fpsTS; fpsTS = ts;
-    const fps = 1000/dt; fpsAvg = fpsAvg*0.9 + fps*0.1;
-    if (fpsAvg < 24 && BARS_CURRENT!==32){ BARS_CURRENT=32; }
-    if (fpsAvg < 18 && Cw!==1280){
-      Cw=1280; Ch=Math.round(Cw*H); canvas.width=Cw; canvas.height=Ch;
-      waveHBase = Math.round(36*Cw/2048); gapBase  = Math.round(24*Cw/2048);
-      overlay.__tex && (overlay.__tex.needsUpdate=true);
-    }
-    if (fpsAvg > 40 && Cw<1600){
-      Cw=1600; Ch=Math.round(Cw*H); canvas.width=Cw; canvas.height=Ch;
-      waveHBase = Math.round(36*Cw/2048); gapBase  = Math.round(24*Cw/2048);
-      overlay.__tex && (overlay.__tex.needsUpdate=true);
-    }
-  }
-
-  // brillo (glow) y shine del marco
-  let shinePhase=0; // 0..1
-  function animateFrameVisuals(ts){
-    let amp=0.0;
-    if(analyser && timeArr && (anaSkip++ % 2 === 0)){ analyser.getByteTimeDomainData(timeArr); amp = rmsFromTimeDomain(timeArr); }
-    animateFrameVisuals._amp = animateFrameVisuals._amp? (animateFrameVisuals._amp*0.85 + amp*0.15) : amp;
-    const A = animateFrameVisuals._amp || 0;
-
-    const glowOpacity = Math.min(0.3, 0.6*A); // 0..0.3
-    frameGlow.setAttribute('material','shader:flat; color:#ffffff; transparent:true; opacity:'+glowOpacity+'; side:double');
-
-    const scalePulse = 1 + Math.min(0.02, A*0.04);
-    frameNice.setAttribute('scale', `${scalePulse} ${scalePulse} 1`);
-
-    // Shine: cruza cada ~6s
-    const speed= (Math.sin(ts/6000)*0.5+0.5)*0.00035 + 0.00025;
-    shinePhase=(shinePhase+speed) % 1;
-    const x = (u.cx - u.wn*0.65) + shinePhase*(u.wn*1.30);
-    const fade = (shinePhase<0.08 || shinePhase>0.92)? 0 : 0.18;
-    frameShine.setAttribute('position', `${x} ${u.cy} 0.0195`);
-    frameShine.setAttribute('material', `transparent:true; opacity:${fade}; side:double; depthTest:false; depthWrite:false`);
-  }
-
-  function draw(ts){
-    if(ts && ts - lastDrawTS < 33){ requestAnimationFrame(draw); return; }
-    lastDrawTS = ts||performance.now();
-    if(!shouldDraw){ requestAnimationFrame(draw); return; }
-
-    maybeAdapt(lastDrawTS);
-    animateFrameVisuals(lastDrawTS);
-
-    const titleColor=(CFG.colors?.title||'#000'), artistColor=(CFG.colors?.artist||'#000');
-    const waveH = waveHBase, gap = gapBase;
-
-    ctx.clearRect(0,0,Cw,Ch);
-
-    // título
-    const tx=px(titleSlot.x,'x'), ty=px(titleSlot.y,'y'), tw=px(titleSlot.w,'x'), th=px(titleSlot.h,'y');
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.font=`800 ${titlePx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillText(CFG.title||'', tx+tw/2+2, ty+th/2+2);
-    ctx.fillStyle=titleColor; ctx.fillText(CFG.title||'', tx+tw/2, ty+th/2);
-
-    // artista
-    const ax=px(artistSlot.x,'x'), ay=px(artistSlot.y,'y'), aw=px(artistSlot.w,'x'), ah=px(artistSlot.h,'y');
-    ctx.font=`600 ${artistPx}px system-ui,Segoe UI,Roboto`;
-    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillText(CFG.artist||'', ax+aw/2+1.8, ay+ah/2+1.8);
-    ctx.fillStyle=artistColor; ctx.fillText(CFG.artist||'', ax+aw/2, ay+ah/2);
-
-    // barra base
-    const pbx=px(barSlot.x,'x'), pby=px(barSlot.y,'y'), pbw=px(barSlot.w,'x'), pbh=Math.max(2,px(barSlot.h,'y'));
-    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(pbx, pby+2, pbw, pbh);
-    ctx.fillStyle='#000'; ctx.fillRect(pbx, pby, pbw, pbh);
-
-    // progreso
-    let p=0, cur='0:00', dur='0:00';
-    if(audio && audio.duration>0){ p=audio.currentTime/audio.duration; cur=mmss(audio.currentTime); dur=mmss(audio.duration); }
-    const fw=Math.max(2, Math.floor(pbw*p));
-    const grad=ctx.createLinearGradient(pbx,0,pbx+fw,0);
-    grad.addColorStop(0, (CFG.colors?.wave1||'#13d77a'));
-    grad.addColorStop(1, (CFG.colors?.wave2||'#ffd54a'));
-    ctx.fillStyle=grad; ctx.fillRect(pbx, pby, fw, pbh);
-
-    // knob + tiempos
-    const kx=pbx+fw, ky=pby+pbh/2, r=Math.max(3, Math.round(pbh*0.9/2));
-    ctx.beginPath(); ctx.arc(kx,ky,r,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill();
-    ctx.fillStyle='#000'; ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-    ctx.font = `700 ${Math.round(28*Cw/2048)}px system-ui,Segoe UI,Roboto`;
-    ctx.fillText(cur, pbx, pby - 10);
-    ctx.textAlign='right'; ctx.fillText(dur, pbx+pbw, pby - 10);
-
-    // espectro doble
-    if (analyser && freqArr && (anaSkip % 2 === 0)) analyser.getByteFrequencyData(freqArr);
-    const arr = freqArr;
-    const step=pbw/BARS_CURRENT, yTop=pby - gap, yBot=pby + pbh + gap;
-    const t = performance.now();
-    const sweepX = pbx + ((Math.sin(t/900)+1)/2)*pbw;
-
-    for(let pass=0; pass<2; pass++){
-      const baseY = (pass===0? yTop : yBot);
-      const col = (pass===0? (CFG.colors?.wave1||'#13d77a') : (CFG.colors?.wave2||'#ffd54a'));
-
-      for(let i=0;i<BARS_CURRENT;i++){
-        const bandIndex = Math.min(arr?arr.length-1:0, 2+i);
-        const raw = arr ? (arr[bandIndex]/255) : (0.25 + 0.75*Math.abs(Math.sin((t/420)+(i*0.35))));
-        levels[i] = Math.max(raw*0.9 + levels[i]*0.1, levels[i]-0.012);
-        peaks[i]  = Math.max(peaks[i]-0.006, levels[i]);
-
-        const x = Math.round(pbx + i*step + step*0.18);
-        const w = Math.max(2, Math.round(step*0.64));
-        const h = Math.max(3, Math.round(levels[i]*waveHBase));
-        const peakY = Math.max(4, Math.round(peaks[i]*waveHBase));
-
-        const dist = Math.abs((x+w/2) - sweepX);
-        const glow = Math.max(0, 1 - dist/120);
-
-        ctx.fillStyle = col;
-        if(pass===0) ctx.fillRect(x, baseY-h, w, h); else ctx.fillRect(x, baseY, w, h);
-
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = '#000';
-        if(pass===0) ctx.fillRect(x, baseY-peakY-2, w, 2);
-        else         ctx.fillRect(x, baseY+peakY,   w, 2);
-        ctx.globalAlpha = 1;
-
-        if(glow>0){
-          const g = ctx.createLinearGradient(x,0,x+w,0);
-          g.addColorStop(0, 'rgba(255,255,255,'+(0.15*glow)+')');
-          g.addColorStop(1, 'rgba(255,255,255,0)');
-          ctx.fillStyle = g;
-          if(pass===0) ctx.fillRect(x, baseY-h, w, h);
-          else         ctx.fillRect(x, baseY,   w, h);
-        }
-      }
-    }
-
-    if(overlay.__tex) overlay.__tex.needsUpdate = true;
-    requestAnimationFrame(draw);
-  }
-  requestAnimationFrame(draw);
-
-  /* ---------- CORAZONES (tap para crear, drag + física) ---------- */
-  (() => {
-    const MAX_HEARTS = 10;
-    const hearts = []; // {el,x,y,vx,vy}
-    const area = { x1:-0.5+0.03, x2:0.5-0.03, y1:-H/2+0.03, y2:H/2-0.03 };
-
-    // Plano receptor
-    const dragPlane = document.createElement('a-plane');
-    dragPlane.classList.add('dragplane');
-    dragPlane.setAttribute('width', 1);
-    dragPlane.setAttribute('height', H);
-    dragPlane.setAttribute('position', '0 0 0.06');
-    dragPlane.setAttribute('material', 'transparent:true; opacity:0; side:double; depthTest:false; depthWrite:false');
-    root.appendChild(dragPlane);
-    setRO(dragPlane, 130, false, false);
-
-    // Raycaster propio (solo pointer*)
-    const R = new AFRAME.THREE.Raycaster();
-    const NDC = new AFRAME.THREE.Vector2();
-    function canvasEl(){ return scene.canvas || document.querySelector('canvas.a-canvas'); }
-    function setNDCFromEvent(e){
-      const c = canvasEl(); if(!c) return;
-      const rect = c.getBoundingClientRect();
-      const t = (e.touches && e.touches[0]) || e;
-      const x = (t.clientX - rect.left) / rect.width;
-      const y = (t.clientY - rect.top)  / rect.height;
-      NDC.set(x*2-1, -(y*2-1));
-    }
-    function intersectObj3D(obj3D){
-      R.setFromCamera(NDC, scene.camera);
-      const res = R.intersectObject(obj3D, true);
-      return res && res[0] || null;
-    }
-    function worldToRoot(vec3){ const p=vec3.clone(); root.object3D.worldToLocal(p); return p; }
-    function pointerOnPlane(e){
-      setNDCFromEvent(e);
-      const hit = intersectObj3D(dragPlane.object3D);
-      if(!hit) return null;
-      const lp = worldToRoot(hit.point);
-      return { x: clamp(lp.x, area.x1, area.x2), y: clamp(lp.y, area.y1, area.y2) };
-    }
-
-    function removeHeartObj(obj){
-      if(!obj || !obj.el) return;
-      obj.el.setAttribute('animation__fade','property: material.opacity; from:1; to:0; dur:220; easing:easeOutQuad');
-      obj.el.addEventListener('animationcomplete__fade', ()=>{ obj.el.remove(); }, {once:true});
-    }
-
-    function spawnHeart(x, y){
-      const h = document.createElement('a-image');
-      h.classList.add('heart');
-      h.setAttribute('src', '#heartImg');
-      h.setAttribute('width', 0.14);
-      h.setAttribute('height', 0.14);
-      h.setAttribute('position', `${x} ${y} 0.08`);
-      h.setAttribute('material','transparent:true; opacity:1; alphaTest:0.01; side:double; depthTest:false; depthWrite:false');
-      root.appendChild(h);
-      setRO(h, 140, false, false);
-      hearts.push({ el:h, x, y, vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3 });
-      while(hearts.length > MAX_HEARTS){
-        const old = hearts.shift(); removeHeartObj(old);
-      }
-    }
-
-    function pickHeart(e){
-      setNDCFromEvent(e);
-      R.setFromCamera(NDC, scene.camera);
-      const objs = hearts.map(h=>h.el.object3D);
-      const res = R.intersectObjects(objs, true);
-      if(!res.length) return null;
-      const hitObj = res[0].object;
-      const el = hitObj.el || hitObj.parent?.el;
-      return hearts.find(h=>h.el===el) || null;
-    }
-
-    let dragging=null, dragOffset={x:0,y:0}, lastTime=0;
-
-    function beginDrag(h, e){
-      const p = pointerOnPlane(e); if(!p) return;
-      dragging = h;
-      dragOffset = { x:h.x - p.x, y:h.y - p.y };
-      lastTime = performance.now();
-    }
-
-    const onDown = (e) => {
-      const h = pickHeart(e);
-      if(h){ beginDrag(h, e); }
-      else{
-        const p = pointerOnPlane(e);
-        if(p) spawnHeart(p.x, p.y);
-      }
-    };
-    const onMove = (e) => {
-      if(!dragging) return;
-      const p = pointerOnPlane(e); if(!p) return;
-      const now = performance.now();
-      const nx = clamp(p.x + dragOffset.x, area.x1, area.x2);
-      const ny = clamp(p.y + dragOffset.y, area.y1, area.y2);
-      const dtms = Math.max(16, now - lastTime);
-      dragging.vx = (nx - dragging.x)/(dtms/1000);
-      dragging.vy = (ny - dragging.y)/(dtms/1000);
-      dragging.x = nx; dragging.y = ny;
-      lastTime = now;
-    };
-    const onUp = () => { dragging = null; };
-
-    function addCanvasListeners(){
-      const c = canvasEl();
-      if(!c){ requestAnimationFrame(addCanvasListeners); return; }
-      c.addEventListener('pointerdown', onDown, {passive:true});
-      c.addEventListener('pointermove', onMove, {passive:true});
-      window.addEventListener('pointerup', onUp, {passive:true});
-    }
-    addCanvasListeners();
-
-    (function heartsTick(){
-      const dt=1/60, g=-0.4, damp=0.60;
-      for(const o of hearts){
-        if(o!==dragging){ o.vy += g*dt; o.x += o.vx*dt; o.y += o.vy*dt; }
-        if(o.x<area.x1){ o.x=area.x1; o.vx*=-damp; }
-        if(o.x>area.x2){ o.x=area.x2; o.vx*=-damp; }
-        if(o.y<area.y1){ o.y=area.y1; o.vy*=-damp; }
-        if(o.y>area.y2){ o.y=area.y2; o.vy*=-damp; }
-        o.el.setAttribute('position', `${o.x} ${o.y} 0.08`);
-        o.el.setAttribute('rotation', `0 0 ${Math.sin(performance.now()/300 + o.x*10)*6}`);
-      }
-      requestAnimationFrame(heartsTick);
-    })();
-  })();
-
-  /* ---------- botón cámara ---------- */
+  /* ---------- botón cámara con fallbacks ---------- */
   async function waitSceneLoaded(){ if(scene.hasLoaded) return; await new Promise(r=>scene.addEventListener('loaded',r,{once:true})); }
   async function waitMindARReady(){
     if(scene.components['mindar-image']) return;
@@ -556,46 +162,60 @@ AFRAME.registerComponent('smooth-follow',{
     if(comp?.start) await comp.start(); else if(sys?.start) await sys.start(); else throw new Error('No MindAR start method');
   }
 
+  async function tryOpenCamera(){
+    const attempts = [
+      { video:{ facingMode:{ideal:'environment'}, width:{ideal:960,max:1280}, height:{ideal:540,max:720}, frameRate:{ideal:30,max:30} }, audio:false },
+      { video:{ facingMode:'environment' }, audio:false },
+      { video:{ facingMode:'user' }, audio:false },
+      { video:true, audio:false }
+    ];
+    let lastErr=null;
+    for(const c of attempts){
+      try{
+        const s=await navigator.mediaDevices.getUserMedia(c);
+        s.getTracks().forEach(t=>t.stop()); // solo probamos disponibilidad
+        return true;
+      }catch(e){ lastErr=e; }
+    }
+    throw lastErr || new Error('No camera available');
+  }
+
   const btnStart=document.getElementById('btnStart');
   btnStart.onclick=async()=>{
     try{
       btnStart.disabled=true; btnStart.textContent='Preparando…'; log('Pidiendo cámara…');
-      const s=await navigator.mediaDevices.getUserMedia({
-        video:{ facingMode:{ideal:'environment'}, width:{ideal:960,max:1280}, height:{ideal:540,max:720}, frameRate:{ideal:30,max:30} },
-        audio:false
-      });
-      s.getTracks().forEach(t=>t.stop());
+
+      await tryOpenCamera();              // ✅ hace los fallbacks
       await waitSceneLoaded();
       await waitMindARReady();
       await startMindAROnce();
+
       btnStart.textContent='Cámara lista';
       log('Cámara iniciada');
     }catch(e){
       btnStart.disabled=false; btnStart.textContent='📷 Abrir cámara';
       log(`No se pudo iniciar la cámara (${e.name||''} ${e.message||e})`);
+      if(e && e.name==='NotFoundError'){
+        alert('No se encontró ninguna cámara disponible o está en uso. Revisa permisos del navegador/OS y vuelve a intentar.');
+      }
     }
   };
 
-  /* ---------- eventos target + ahorro ---------- */
+  /* ---------- eventos de target ---------- */
   anchor.addEventListener('targetFound', async ()=>{
-    shouldDraw = true;
     try{ await v1.play(); setTimeout(checkBlackFallback, 200); }catch{}
-    setupAudio();
-    try{ acx && acx.state==='suspended' && await acx.resume(); await audio.play(); }catch{}
-    document.getElementById('btnAudio').disabled=false;
     log('Target FOUND');
   });
   anchor.addEventListener('targetLost', ()=>{
-    shouldDraw = false;
-    v1.pause(); audio?.pause(); document.getElementById('btnAudio').textContent='▶️ Audio'; log('Target LOST…');
-  });
-  document.addEventListener('visibilitychange', ()=>{
-    if (document.hidden){ shouldDraw=false; audio?.pause(); }
-    else { shouldDraw=true; }
+    v1.pause();
+    log('Target LOST…');
   });
 
-  // iOS: primer gesto ayuda a media
-  window.addEventListener('pointerup', ()=>{ v1.play().catch(()=>{}); if(!scene.systems['mindar-image-system']?.active) btnStart.click(); }, {once:true,passive:true});
+  // iOS: primer gesto ayuda a medios
+  window.addEventListener('pointerup', ()=>{
+    v1.play().catch(()=>{});
+    if(!scene.systems['mindar-image-system']?.active) btnStart.click();
+  }, {once:true,passive:true});
 })();
 </script>
 </body>
